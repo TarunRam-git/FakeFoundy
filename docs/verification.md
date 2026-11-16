@@ -51,17 +51,19 @@ The fixed target is `pallets/flask`, tag `3.1.3`, commit prefix `22d92470`.
 - Generation cancellation was observed with approximately 171 ms to UI Ready and
   a remotely cancelled session. This evidence predates the newest approval gate.
 - Native diff, selective rejection/acceptance and Undo/redo were exercised in real
-  VS Code. Repeat these through the new approval gate before claiming the complete
-  current-version flow has passed.
+  VS Code. The latest approval smoke below covers Keep staged; it does not establish
+  every current-version hunk/rejection/cancellation combination.
 
 The native TrueForge approval protocol has now been verified live for allow, deny
-and cancellation. The new VS Code
-callback that previews a batch and returns keep/reject **has not yet been verified
-end to end**. Approval retains proposals; it does not replace later hunk selection
-and explicit Apply. No full integration scoring claim follows from protocol alone.
+and cancellation. The latest VS Code approval smoke also passed: native diff appeared, **Keep
+staged** resumed approval on the same turn, and disk remained unchanged. The
+approval toast was behind the progress notification and accessible through the
+notifications bell. This verifies the keep-staged UI path, not UI batch rejection
+or cancellation. Approval retains proposals; it does not replace later hunk
+selection and explicit Apply. No complete integration-score claim is made.
 
-Still required: a clean autonomous Task B run, the latest native approval UI
-allow/reject/cancel path, and real configured model fallback. Earlier test evidence
+Still required: a clean autonomous Task B run, native approval UI
+reject/cancel paths, and real configured model fallback. Earlier test evidence
 must not silently be attributed to the newest working-tree changes.
 
 ## Runtime transport smoke
@@ -91,7 +93,8 @@ this new terminal integration.
   No arbitrary shell, host fallback, Flask CLI or dependency installation exists.
 - Snapshot limits (500 text files/20 MiB), read-only mounts, 30-second/256 MiB/no-fork
   bounds and 16 KiB output can prevent valid projects from testing successfully.
-- Native batch approval is implemented; its new VS Code UI path remains unverified.
+- Native batch approval Keep staged UI is verified; UI batch rejection and
+  cancellation through that gate remain unverified.
 - Initial context is budgeted by UTF-8 bytes, not a whole-session token budget;
   references are lexical, not semantic language-server resolution.
 - One fixed runtime connector name limits concurrent extension instances.

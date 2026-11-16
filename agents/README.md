@@ -21,5 +21,6 @@ this after staging its batch. The client handles native approval on the same tur
 the extension previews proposals and asks to keep staged or reject the batch.
 Successful native approval is not editor Apply: independent hunk selection and
 explicit buffer application happen afterwards. A run that leaves unapproved
-changes fails closed. The live approval protocol has been checked, but the new
-VS Code approval UI still requires end-to-end verification.
+changes fails closed. Live allow/deny/cancel protocol checks passed. The VS Code native-diff and
+Keep staged path also passed, with same-turn approval and unchanged disk.
+That UI result does not verify every rejection/cancellation path.

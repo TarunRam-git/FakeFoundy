@@ -48,8 +48,9 @@ Use a dedicated runtime and one active extension workspace: the connector name
   Symbol matching is lexical, not language-server navigation.
 - During a run, TrueForge pauses at `review_staged_edits`. The extension previews
   the batch and asks whether to keep it staged or reject it. This does not apply
-  edits. The live protocol has been checked; the new VS Code approval gate still
-  needs end-to-end UI verification.
+  edits. Native diff, **Keep staged**, same-turn approval and unchanged disk were
+  verified in VS Code. If the approval toast is hidden behind progress, open the
+  notifications bell to find it.
 - **FakeFoundy: Review Proposed Edit** opens a native diff. Choose the hunks to
   accept, inspect the selected-only diff, then Apply or Reject. Unselected hunks
   are discarded after confirmation. Escape preserves the proposal.
@@ -96,10 +97,10 @@ required for snapshot tests, but remains required for external tests. General
 shells, arbitrary Python commands, Flask CLI execution and builds are unsupported.
 
 Native TrueForge approval now gates keeping a staged batch; per-hunk selection
-and editor Apply are a separate later step. Do not equate the protocol check with
-verified end-to-end approval UI or complete competition scoring compliance.
-Outstanding validation includes autonomous fixed-task B, the new approval UI,
-and real configured fallback behavior. See verification scope for exact evidence.
+and editor Apply are a separate later step. The Keep staged UI path has been
+verified; UI batch rejection/cancellation and complete competition scoring
+compliance are not claimed. Outstanding validation includes autonomous fixed-task
+B and real configured fallback behavior. See verification scope for exact evidence.
 
 ## Tests
 
