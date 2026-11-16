@@ -10,7 +10,8 @@
   },
   "main": "./dist/extension.js",
   "activationEvents": [
-    "onCommand:fakefoundy.start"
+    "onCommand:fakefoundy.start",
+    "onCommand:fakefoundy.inline"
   ],
   "contributes": {
     "commands": [
@@ -21,6 +22,18 @@
       {
         "command": "fakefoundy.review",
         "title": "FakeFoundy: Review Proposed Edit"
+      },
+      {
+        "command": "fakefoundy.cancel",
+        "title": "FakeFoundy: Cancel Run"
+      },
+      {
+        "command": "fakefoundy.inline",
+        "title": "FakeFoundy: Edit Selection"
+      },
+      {
+        "command": "fakefoundy.panel",
+        "title": "FakeFoundy: Open Agent Panel"
       }
     ],
     "configuration": {
@@ -37,9 +50,36 @@
         "fakefoundy.mcpPort": {
           "type": "number",
           "default": 31337
+        },
+        "fakefoundy.fallbackModel": {
+          "type": "string",
+          "default": "",
+          "description": "Optional second TrueForge model to try once after an unsuccessful primary run. Failed-attempt proposals are discarded."
+        },
+        "fakefoundy.runTimeoutSeconds": {
+          "type": "number",
+          "default": 300,
+          "minimum": 10,
+          "maximum": 1800,
+          "description": "Maximum run duration, including fallback, before cancellation."
+        },
+        "fakefoundy.contextBudgetBytes": {
+          "type": "number",
+          "default": 16000,
+          "minimum": 256,
+          "maximum": 65536,
+          "description": "Maximum UTF-8 bytes of retrieved context excerpts per turn. Prompt and tool results are additional."
         }
       }
-    }
+    },
+    "keybindings": [
+      {
+        "command": "fakefoundy.inline",
+        "key": "ctrl+alt+i",
+        "mac": "cmd+alt+i",
+        "when": "editorTextFocus && editorHasSelection && !editorReadonly"
+      }
+    ]
   },
   "scripts": {
     "build": "tsc -p .",

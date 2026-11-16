@@ -45,7 +45,7 @@ test("real MCP transport reads and stages, rejects unauthenticated requests", as
     const listed = await client.listTools();
     assert.deepEqual(
       listed.tools.map((t) => t.name),
-      ["read_file", "propose_edit"],
+      ["list_files", "search_files", "read_file", "propose_edit", "run_terminal"],
     );
     await client.callTool({
       name: "propose_edit",
