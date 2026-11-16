@@ -12,15 +12,26 @@
 - Absolute outside paths and symlinks escaping workspace are rejected.
 - TrueForge 0.185.1 launches in local SQLite mode with data under a temporary directory.
 
-## Blocked, not passed
+## End-to-end runtime smoke: passed
 
-- Full TrueForge session → model → MCP tools → streamed result smoke:
-  the stock runtime rejects the loopback model provider URL with HTTP 400,
-  `Outbound URL blocked for host "127.0.0.1"`.
-- The supported runtime `OUTBOUND_URL_ALLOWED_HOSTS` setting can allow this
-  specific host, but it is a security-sensitive exception. It is not enabled by
-  our scripts or defaults. Approval is required before applying it here.
-- No paid/external model has been configured or called.
+After explicit approval, a dedicated temporary TrueForge process was started
+with only `127.0.0.1` added to its outbound-host allowlist. No persistent runtime
+or system configuration was changed. Runtime was stopped after the test; connection
+to port 8792 was verified refused afterwards.
+
+- Real TrueForge 0.185.1 session created successfully.
+- 16 streamed events: turn.created, mcp.initialize, model.message,
+  model.message.delta, tool.response, turn.done.
+- Three model requests against a deterministic local fake OpenAI-compatible model.
+- MCP read_file followed by propose_edit; one proposal staged.
+- Workspace file remained unchanged.
+- Terminal turn status was successful.
+
+This proves real harness → local MCP → staged-edit transport wiring. It does NOT
+prove real-model reasoning, VS Code UI behavior, or competition task success.
+The stock runtime still blocks loopback connector/provider URLs; approval was
+limited to this test process, and no exception is enabled by repository defaults.
+No paid/external model was configured or called.
 
 ## Not run / not implemented
 
