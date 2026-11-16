@@ -2,11 +2,13 @@
 
 ## Passed
 
-- `npm test`: strict TypeScript compilation; two Node test cases.
+- `npm test`: strict TypeScript compilation; five Node test cases.
 - Real Streamable HTTP MCP initialization, tools/list and tools/call.
 - Proposal tool stages an edit without changing disk.
 - Missing bridge bearer token returns 401.
 - Rejection removes proposal; stale-file apply is rejected.
+- Error/cancelled/truncated TrueForge event streams are not reported as success.
+- Sensitive credential paths (including symlink aliases) and oversized files are refused.
 - Absolute outside paths and symlinks escaping workspace are rejected.
 - TrueForge 0.185.1 launches in local SQLite mode with data under a temporary directory.
 
