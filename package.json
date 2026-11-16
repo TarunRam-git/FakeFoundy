@@ -1,0 +1,62 @@
+{
+  "name": "fakefoundy",
+  "displayName": "FakeFoundy",
+  "description": "TrueForge-native coding agent proof of integration",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "vscode": "^1.96.0",
+    "node": ">=22.14.0"
+  },
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onCommand:fakefoundy.start"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "fakefoundy.start",
+        "title": "FakeFoundy: Start TrueForge Agent"
+      },
+      {
+        "command": "fakefoundy.review",
+        "title": "FakeFoundy: Review Proposed Edit"
+      }
+    ],
+    "configuration": {
+      "title": "FakeFoundy",
+      "properties": {
+        "fakefoundy.baseUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8790"
+        },
+        "fakefoundy.model": {
+          "type": "string",
+          "default": "openai/gpt-4.1-mini"
+        },
+        "fakefoundy.mcpPort": {
+          "type": "number",
+          "default": 31337
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "test": "npm run build && node --test dist/test/*.test.js",
+    "trueforge": "trueforge",
+    "smoke": "npm run build && node scripts/smoke.mjs"
+  },
+  "dependencies": {
+    "@truefoundry/trueforge-sdk": "0.185.0",
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "@types/node": "22.19.1",
+    "@types/vscode": "1.96.0",
+    "@truefoundry/trueforge": "0.185.1"
+  },
+  "license": "MIT"
+}
