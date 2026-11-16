@@ -19,7 +19,7 @@ const model = createServer(async (req, res) => {
   const body = JSON.parse(raw);
   calls++;
   const tools = body.tools ?? [];
-  const desired = calls === 1 ? "read_file" : "propose_edit";
+  const desired = calls === 1 ? "fakefoundy_read_file" : "propose_patch";
   const tool = tools.find((t) => t.function?.name?.endsWith(desired));
   const delta =
     calls <= 2 && tool
@@ -35,7 +35,7 @@ const model = createServer(async (req, res) => {
                 arguments: JSON.stringify(
                   calls === 1
                     ? { path: "hello.txt" }
-                    : { path: "hello.txt", content: "after" },
+                    : { path: "hello.txt", old_text: "before", new_text: "after" },
                 ),
               },
             },

@@ -83,8 +83,8 @@
   },
   "scripts": {
     "build": "tsc -p .",
-    "test": "npm run build && node --test dist/test/*.test.js",
-    "trueforge": "trueforge",
+    "test": "npm run build && node --test dist/test/*.test.js scripts/test/*.test.mjs",
+    "trueforge": "node scripts/trueforge.mjs",
     "smoke": "npm run build && node scripts/smoke.mjs"
   },
   "dependencies": {

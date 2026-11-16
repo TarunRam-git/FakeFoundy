@@ -14,8 +14,15 @@ export interface Proposal {
 /** No agent-facing tool can apply a proposal. Only the editor's explicit review can. */
 export class ProposalStore {
   private items = new Map<string, Proposal>();
+  private patchEdits = new Map<string, {start:number; end:number; text:string}[]>();
+  private patchGenerations = new Map<string, number>();
+  private patchQueues = new Map<string, Promise<void>>();
   private generation = 0;
   private active = true;
+  private inlineScope?: {path:string; oldText:string};
+  setInlineScope(scope?: {path:string; oldText:string}) {
+    this.inlineScope = scope ? {...scope} : undefined;
+  }
   beginRun() { this.generation++; this.active = true; }
   endRun() { this.generation++; this.active = false; }
   invalidatePending() { this.endRun(); }
@@ -59,23 +66,108 @@ export class ProposalStore {
     if (content.includes("\0")) throw new Error("Binary files are not supported");
     return content;
   }
-  async propose(path: string, content: string): Promise<Proposal> {
-    const generation = this.generation;
-    if (!this.active) throw new Error("No active agent run");
-    if (Buffer.byteLength(content) > 1024 * 1024)
-      throw new Error("Proposal exceeds 1 MiB");
-    const before = await this.read(path);
-    const p = {
-      id: randomUUID(),
-      path: await this.safePath(path),
-      before,
-      hunks: diffHunks(before, content),
-      after: content,
-    };
+  /** Small, exact, paginated excerpts. Continuation preserves even very long lines. */
+  async readRange(path: string, startLine = 1, maxLines = 40, startColumn = 0) {
+    if (!Number.isInteger(startLine) || startLine<1 || !Number.isInteger(maxLines) || maxLines<1 || maxLines>80 || !Number.isInteger(startColumn) || startColumn<0)
+      throw new Error("Invalid range: positive start_line, max_lines 1..80, nonnegative start_column required");
+    const source=await this.read(path);
+    const lines=source.match(/[^\n]*\n|[^\n]+$/g) ?? [];
+    if (startLine>lines.length+1 || (startLine===lines.length+1 && startColumn!==0) || (startLine<=lines.length && startColumn>lines[startLine-1].length))
+      throw new Error("Read range is outside file");
+    let line=startLine-1, column=startColumn, text="";
+    const stop=Math.min(lines.length,line+maxLines);
+    // UTF-16 offsets are explicit; avoid splitting surrogate pairs at page boundaries.
+    while(line<stop && text.length<8000) {
+      const remaining=lines[line].slice(column);
+      let count=Math.min(remaining.length,8000-text.length);
+      if(count<remaining.length && count>0 && /[\uD800-\uDBFF]/.test(remaining[count-1])) count--;
+      if(!count && remaining.length) break;
+      text+=remaining.slice(0,count);column+=count;
+      if(column===lines[line].length) {line++;column=0;} else break;
+    }
+    const hasMore=line<lines.length;
+    return {path,start_line:startLine,start_column:startColumn,text,total_lines:lines.length,
+      has_more:hasMore,next:hasMore?{start_line:line+1,start_column:column}:null};
+  }
+  private async stage(path: string, before: string, content: string, generation: number, exclusive = false, replace?: Proposal): Promise<Proposal> {
+    if (Buffer.byteLength(content) > 1024 * 1024) throw new Error("Proposal exceeds 1 MiB");
+    const p = {id:replace?.id ?? randomUUID(), path:await this.safePath(path), before,
+      hunks:diffHunks(before,content), after:content};
     if (!this.active || generation !== this.generation) throw new Error("Agent run ended; proposal discarded");
-    this.items.set(p.id, p);
+    if (exclusive) {
+      const current=this.list().filter(existing=>existing.path===p.path);
+      if (replace ? current.length!==1 || current[0]!==replace : current.length!==0)
+        throw new Error("Conflicting pending proposal changed while staging; reread and retry");
+    }
+    this.items.set(p.id,p);
     return p;
   }
+  async propose(path: string, content: string): Promise<Proposal> {
+    if (this.inlineScope) throw new Error("Inline edits require propose_selection with replacement text only; full-file replacement is disabled");
+    const generation=this.generation;
+    if (!this.active) throw new Error("No active agent run");
+    return this.stage(path,await this.read(path),content,generation);
+  }
+  /** Inline-only: selection identity stays server-side; model sends replacement text only. */
+  async proposeSelection(newText: string): Promise<Proposal> {
+    const scope=this.inlineScope;
+    if (!scope) throw new Error("propose_selection requires an active inline selection");
+    return this.proposePatch(scope.path,scope.oldText,newText);
+  }
+  /** Exact replacement, never interprets new_text as an entire file. No disk writes. */
+  async proposePatch(path: string, oldText: string, newText: string): Promise<Proposal> {
+    const generation=this.generation;
+    const scope=this.inlineScope;
+    if (!this.active) throw new Error("No active agent run");
+    if (!oldText) throw new Error("old_text must be non-empty");
+    if (Buffer.byteLength(oldText)>24000 || Buffer.byteLength(newText)>24000 || oldText.split("\n").length>200)
+      throw new Error("Patch range too large: use disjoint original ranges of at most 200 lines and 24 KB each");
+    const target=await this.safePath(path);
+    if (scope && (target!==await this.safePath(scope.path) || oldText!==scope.oldText))
+      throw new Error("Inline patch must target exactly the selected file and selected old_text");
+    // Serialize same-file requests so concurrent disjoint patches compose deterministically.
+    const previous=this.patchQueues.get(target) ?? Promise.resolve();
+    let release!:()=>void;
+    const lock=new Promise<void>(resolve=>{release=resolve;});
+    const tail=previous.then(()=>lock);
+    this.patchQueues.set(target,tail);
+    await previous;
+    try {
+      const pending=this.list().filter(p=>p.path===target);
+      if (pending.length>1 || (pending.length && !this.patchEdits.has(pending[0].id)))
+        throw new Error("Conflicting full-file proposal; cannot compose patches with it");
+      const existing=pending[0];
+      if (existing && this.patchGenerations.get(existing.id)!==generation)
+        throw new Error("Pending patch belongs to an earlier run; review or reject it before starting another run");
+      const before=await this.read(target);
+      if (existing && existing.before!==before) throw new Error("File changed since proposal; regenerate it");
+      const index=before.indexOf(oldText);
+      if (index<0) {
+        if (oldText.includes("\\n")) {
+          const decoded=oldText.replace(/\\r\\n/g,"\r\n").replace(/\\n/g,"\n");
+          if (before.includes(decoded))
+            throw new Error("old_text contains literal backslash-n sequences instead of actual newline characters. Send the same text with real newlines in the parsed string; JSON-encode once, not twice. Nothing was staged. Do not reread or search: correct this argument and retry once.");
+        }
+        throw new Error("old_text does not match original disk text. Nothing was staged. Read only the target line range with fakefoundy_read_file, copy a short unique anchor exactly, then correct the patch; do not restart repository discovery.");
+      }
+      if (before.indexOf(oldText,index+1)>=0) throw new Error("old_text is not unique; include more context");
+      const edits=existing ? this.patchEdits.get(existing.id)! : [];
+      const end=index+oldText.length;
+      if (edits.some(edit=>index<edit.end && end>edit.start))
+        throw new Error("Conflicting patch overlaps a previously staged original range");
+      const combined=[...edits,{start:index,end,text:newText}].sort((a,b)=>b.start-a.start);
+      let after=before;
+      for (const edit of combined) after=after.slice(0,edit.start)+edit.text+after.slice(edit.end);
+      const p=await this.stage(target,before,after,generation,true,existing);
+      this.patchEdits.set(p.id,combined);
+      this.patchGenerations.set(p.id,generation);
+      return p;
+    } finally {
+      release();
+      if (this.patchQueues.get(target)===tail) this.patchQueues.delete(target);
+    }
+  }
+
   /** Bounded discovery: never follows symlink directories or exposes hidden/generated trees. */
   async discover(query = "", limit = 100) {
     const files: string[] = [];
@@ -137,6 +229,8 @@ export class ProposalStore {
     return p;
   }
   reject(id: string) {
+    this.patchEdits.delete(id);
+    this.patchGenerations.delete(id);
     this.items.delete(id);
   }
   async apply(id: string) {
@@ -144,6 +238,6 @@ export class ProposalStore {
     if ((await this.read(p.path)) !== p.before)
       throw new Error("File changed since proposal; regenerate it");
     await writeFile(p.path, p.after);
-    this.items.delete(id);
+    this.reject(id);
   }
 }

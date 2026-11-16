@@ -30,7 +30,7 @@ export function activate(context: vscode.ExtensionContext) {
   });
   context.subscriptions.push(
     vscode.commands.registerCommand("fakefoundy.cancel", () => activeRun?.abort()),
-    vscode.commands.registerCommand("fakefoundy.start", async (providedPrompt?: string, inline?: boolean) => {
+    vscode.commands.registerCommand("fakefoundy.start", async (providedPrompt?: string, inline?: {path:string; oldText:string}) => {
       if (!vscode.workspace.isTrusted) {
         void vscode.window.showErrorMessage(
           "Trust this workspace before running FakeFoundy.",
@@ -88,6 +88,7 @@ export function activate(context: vscode.ExtensionContext) {
                 return answer === "Allow once" && activeRun === requestingRun && !requestingRun.signal.aborted;
               },
             });
+            store.setInlineScope(inline);
             const existing = new Set(store.list().map((p) => p.id));
             rollback = () => {
               store!.endRun();
@@ -142,6 +143,7 @@ export function activate(context: vscode.ExtensionContext) {
       } finally {
         if (timer) clearTimeout(timer);
         store?.endRun();
+        store?.setInlineScope();
         panel.finish();
         activeRun = undefined;
         busy = false;
