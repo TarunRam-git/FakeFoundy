@@ -5,7 +5,7 @@ It is not a competition submission or a claim of complete eligibility.
 
 ## Current automated checks
 
-Latest working-tree check: `npm test` completed **60 tests: 59 passed, one skipped**
+Latest working-tree check: `npm test` completed **63 tests: 62 passed, one skipped**
 after strict TypeScript compilation. The skipped test needs functioning sandbox
 namespaces; this host denied `NETLINK_ROUTE` setup. A skip does not verify isolation.
 The earlier committed baseline `966699c` passed 38/38. Tests cover:
@@ -45,7 +45,7 @@ malformed requests fail clearly; dismissal and timeout cancel the remote session
 Focused real Gemini/TrueForge VS Code tests passed after the fix: the editor
 showed a question with alpha/beta choices, accepting alpha resumed the same turn
 and produced the expected reply. Escape cancelled the remote session with zero
-answer events. Disk remained unchanged. The latest Disco suite passed **60/60**.
+answer events. Disk remained unchanged. The question-fix Disco suite passed **60/60**.
 These checks verify the question UI, not autonomous completion of Task B.
 
 ## Real-model and editor observations
@@ -103,12 +103,27 @@ the sandbox. Host capability checks remain mandatory and unsupported hosts fail
 closed. The earlier Flask 59/491-test results must not be described as runs of
 this new terminal integration.
 
+## Binary snapshot repair
+
+A later Task B attempt exposed binary Flask assets rejected by the text-only
+snapshot reader. The sandbox snapshot now copies bounded binary fixtures exactly;
+agent-facing read tools remain text-only. Protected paths, symlinks, non-regular
+files and oversized files remain excluded or rejected. Descriptor-based path
+validation and byte limits apply before copying. A second check compares actual
+opened file bytes to each staged proposal's original before overlay, rejecting
+edits that arrive after initial validation.
+
+Regression tests cover exact binary bytes, secret/symlink/size rejection, and a
+user edit landing between initial validation and copying. These tests pass, but
+the latest snapshot repair has not yet been revalidated through a full live
+Flask Task B run. It does not change Task B's assisted/not-autonomous status.
+
 ## Known implementation gaps
 
 - Sandbox Python pytest/unittest recipes now exist, but only on non-root Linux
   with functioning bubblewrap namespaces, prlimit, and system Python dependencies.
   No arbitrary shell, host fallback, Flask CLI or dependency installation exists.
-- Snapshot limits (500 text files/20 MiB), read-only mounts, 30-second/256 MiB/no-fork
+- Snapshot limits (500 files, 1 MiB per file, 20 MiB total), read-only mounts, 30-second/256 MiB/no-fork
   bounds and 16 KiB output can prevent valid projects from testing successfully.
 - Native batch approval Keep staged UI is verified; UI batch rejection and
   cancellation through that gate remain unverified.

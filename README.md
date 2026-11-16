@@ -91,10 +91,12 @@ arguments and explicit one-time approval. Executable recipes require non-root
 Linux with `/usr/bin/bwrap`, `/usr/bin/prlimit`, `/usr/bin/python3` and permitted
 user/network namespaces. There is **no unsandboxed fallback**.
 
-Tests run in a temporary filtered text snapshot including staged patches, not the
-real workspace. The snapshot is read-only inside the sandbox; network, host home,
+Tests run in a temporary filtered file snapshot including staged text patches, not the
+real workspace. Bounded binary fixtures are copied byte-for-byte, but model-facing
+read tools remain text-only. Staged files are revalidated against the actual opened
+bytes before overlay. The snapshot is read-only inside the sandbox; network, host home,
 credentials and dependency installation are unavailable. Only system Python
-packages are visible, not project virtualenvs. Bounds: 500 files, 20 MiB snapshot,
+packages are visible, not project virtualenvs. Bounds: 500 files, 1 MiB per file, 20 MiB snapshot,
 30 seconds, 256 MiB address space, no subprocess creation and 16 KiB combined
 output. These restrictions can reject otherwise valid suites. Save/apply is not
 required for snapshot tests, but remains required for external tests. General
@@ -110,7 +112,7 @@ B and real configured fallback behavior. See verification scope for exact eviden
 
 `npm test` compiles TypeScript and runs unit/transport tests, including real HTTP
 MCP calls, bounded patch composition, confinement, retry semantics, and rollback.
-The latest local run: 60 tests, 59 passed, one host-dependent isolation test
+The latest local run: 63 tests, 62 passed, one host-dependent isolation test
 skipped because this host denied sandbox network-namespace setup. This is not a
 real-model benchmark, and a skipped isolation test is not a security pass.
 

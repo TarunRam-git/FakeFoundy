@@ -110,3 +110,57 @@ test("snapshot rejects stale staged proposals instead of testing outdated conten
     assert.equal(await readFile(join(root,"a.py"),"utf8"),"user changed");
   }finally{await rm(parent,{recursive:true,force:true});}
 });
+
+
+test("snapshot preserves bounded binary fixtures exactly, excludes secret and symlink files",async()=>{
+  const parent=await mkdtemp(join(tmpdir(),"ff-snapshot-binary-"));
+  const root=join(parent,"workspace"),snapshot=join(parent,"snapshot");
+  try {
+    await mkdir(root);await mkdir(snapshot);
+    const png=Buffer.from([137,80,78,71,13,10,26,10,0,255,128,1]);
+    await writeFile(join(root,"asset.png"),png);
+    await writeFile(join(root,".env"),"secret");
+    await symlink(join(root,"asset.png"),join(root,"alias.png"));
+    const store=new ProposalStore(root);
+    await prepareSnapshot(store,snapshot);
+    assert.deepEqual(await readFile(join(snapshot,"asset.png")),png);
+    await assert.rejects(readFile(join(snapshot,".env")),/ENOENT/);
+    await assert.rejects(readFile(join(snapshot,"alias.png")),/ENOENT/);
+    await assert.rejects(store.read("asset.png"),/Binary/);
+    store.discover=async()=>({files:["alias.png"],truncated:false});
+    await assert.rejects(prepareSnapshot(store,snapshot),/symbolic links/);
+    store.discover=async()=>({files:[".env"],truncated:false});
+    await assert.rejects(prepareSnapshot(store,snapshot),/Sensitive/);
+  }finally{await rm(parent,{recursive:true,force:true});}
+});
+
+test("snapshot byte reader rejects oversized regular files before copying",async()=>{
+  const parent=await mkdtemp(join(tmpdir(),"ff-snapshot-large-"));
+  const root=join(parent,"workspace"),snapshot=join(parent,"snapshot");
+  try {
+    await mkdir(root);await mkdir(snapshot);await writeFile(join(root,"large.bin"),Buffer.alloc(1024*1024+1));
+    const store=new ProposalStore(root);
+    store.discover=async()=>({files:["large.bin"],truncated:false});
+    await assert.rejects(prepareSnapshot(store,snapshot),/1 MiB/);
+    await assert.rejects(readFile(join(snapshot,"large.bin")),/ENOENT/);
+  }finally{await rm(parent,{recursive:true,force:true});}
+});
+
+test("snapshot rejects a file changed after initial proposal validation",async()=>{
+  const parent=await mkdtemp(join(tmpdir(),"ff-snapshot-race-"));
+  const root=join(parent,"workspace"),snapshot=join(parent,"snapshot");
+  try {
+    await mkdir(root);await mkdir(snapshot);await writeFile(join(root,"a.py"),"original");
+    const store=new ProposalStore(root);await store.proposePatch("a.py","original","staged");
+    const read=store.read.bind(store);
+    store.read=async(path:string)=>{
+      const before=await read(path);
+      // A user edit lands after validation reads, before descriptor copy.
+      await writeFile(join(root,"a.py"),"new user edit");
+      return before;
+    };
+    await assert.rejects(prepareSnapshot(store,snapshot),/changed while preparing snapshot/);
+    await assert.rejects(readFile(join(snapshot,"a.py")),/ENOENT/);
+    assert.equal(await readFile(join(root,"a.py"),"utf8"),"new user edit");
+  }finally{await rm(parent,{recursive:true,force:true});}
+});

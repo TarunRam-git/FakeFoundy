@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { access, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, mkdtemp, open, realpath, rm, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -87,13 +87,44 @@ export async function runSandboxTerminal(store: ProposalStore, input: TerminalRe
   } finally { if(snapshot) await rm(snapshot,{recursive:true,force:true});active.delete(store); }
 }
 
-/** Copies text and staged patches only; never launches repository code. */
+/** Snapshot-only binary reader: editor/model read tools remain text-only. */
+async function readSnapshotBytes(store: ProposalStore, canonicalRoot: string, path: string): Promise<Buffer> {
+  if(!path || isAbsolute(path) || path.split(/[\\/]/).includes(".."))
+    throw new Error("Snapshot path escapes workspace");
+  let component=canonicalRoot;
+  for(const part of path.split("/")) {
+    component=join(component,part);
+    if((await lstat(component)).isSymbolicLink()) throw new Error("Snapshot excludes symbolic links");
+  }
+  const safe=await store.safePath(path);
+  const file=await open(safe,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
+  try {
+    const stat=await file.stat();
+    if(!stat.isFile() || stat.size>1024*1024) throw new Error("Snapshot files must be regular and at most 1 MiB");
+    // The sandbox feature is Linux-only. Check the opened descriptor itself so
+    // a renamed parent/symlink race cannot redirect a read outside the policy.
+    const opened=await realpath(`/proc/self/fd/${file.fd}`);
+    if(opened!==safe || await store.safePath(opened)!==opened)
+      throw new Error("Snapshot file changed location while opening");
+    const buffer=Buffer.alloc(1024*1024+1);
+    let length=0;
+    while(length<buffer.length) {
+      const {bytesRead}=await file.read(buffer,length,buffer.length-length,null);
+      if(!bytesRead) break;
+      length+=bytesRead;
+    }
+    if(length>1024*1024) throw new Error("Snapshot file grew beyond 1 MiB");
+    return buffer.subarray(0,length);
+  } finally { await file.close(); }
+}
+
+/** Copies bounded regular file bytes and staged text patches; never launches repository code. */
 export async function prepareSnapshot(store: ProposalStore, snapshot: string, signal?: AbortSignal): Promise<void> {
     const listing=await store.discover("",500);
     if(listing.truncated) throw new Error("Workspace exceeds the 500-file snapshot bound. Narrow the workspace; no incomplete test snapshot is executed.");
     const canonicalRoot=await realpath(store.root);
     const canonicalSnapshot=await realpath(snapshot);
-    const proposals=new Map<string,string>();
+    const proposals=new Map<string,{before:string;after:string}>();
     for(const proposal of store.list().map(p=>({...p}))) {
       const canonicalPath=await store.safePath(proposal.path);
       if((await store.read(canonicalPath)) !== proposal.before)
@@ -101,15 +132,20 @@ export async function prepareSnapshot(store: ProposalStore, snapshot: string, si
       const path=relative(canonicalRoot,canonicalPath).replaceAll("\\","/");
       if(!path || isAbsolute(path) || path.split("/").includes(".."))
         throw new Error("Proposal path escapes canonical workspace");
-      proposals.set(path,proposal.after);
+      proposals.set(path,{before:proposal.before,after:proposal.after});
     }
     let total=0;
     for(const path of new Set([...listing.files,...proposals.keys()])) {
       if(signal?.aborted) throw new Error("Cancelled while preparing snapshot.");
-      await store.safePath(path);
-      const content=proposals.get(path)??await store.read(path);
+      const original=await readSnapshotBytes(store,canonicalRoot,path);
+      const proposal=proposals.get(path);
+      // Validate the actual opened bytes, not just an earlier path read. The
+      // user's file may change between proposal collection and this copy.
+      if(proposal && !original.equals(Buffer.from(proposal.before,"utf8")))
+        throw new Error("File changed while preparing snapshot; regenerate before testing staged edits");
+      const content=proposal?Buffer.from(proposal.after,"utf8"):original;
       total+=Buffer.byteLength(content);
-      if(total>20*1024*1024) throw new Error("Workspace exceeds the 20 MiB text snapshot bound. Nothing executed.");
+      if(total>20*1024*1024) throw new Error("Workspace exceeds the 20 MiB snapshot bound. Nothing executed.");
       if(!path || isAbsolute(path) || path.split(/[\\/]/).includes(".."))
         throw new Error("Snapshot path escapes workspace");
       const target=resolve(canonicalSnapshot,path);
