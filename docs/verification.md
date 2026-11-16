@@ -5,7 +5,7 @@ It is not a competition submission or a claim of complete eligibility.
 
 ## Current automated checks
 
-Latest working-tree check: `npm test` completed **54 tests: 53 passed, one skipped**
+Latest working-tree check: `npm test` completed **60 tests: 59 passed, one skipped**
 after strict TypeScript compilation. The skipped test needs functioning sandbox
 namespaces; this host denied `NETLINK_ROUTE` setup. A skip does not verify isolation.
 The earlier committed baseline `966699c` passed 38/38. Tests cover:
@@ -30,6 +30,23 @@ real-model success on the fixed competition tasks.
 Additional checks cover native approval allow/deny on the same turn, unknown or
 duplicate requests, approval-time cancellation, pending-action handling, sandbox
 recipe admission, process bounds, and snapshot confinement/stale-proposal checks.
+
+## Built-in question lifecycle
+
+A clean exact Task B attempt exposed a real integration gap: the runtime emitted
+`ask_user_question`, but the editor remained Working without displaying it. That
+attempt produced no patches and was cancelled; it is not a Task B success.
+
+The client now resolves `tool.response_required` against the authoritative stored
+message, verifies the system tool, and displays its question and bounded choices.
+A user answer is posted as `user.tool_response` on the same active turn. Unknown or
+malformed requests fail clearly; dismissal and timeout cancel the remote session.
+
+Focused real Gemini/TrueForge VS Code tests passed after the fix: the editor
+showed a question with alpha/beta choices, accepting alpha resumed the same turn
+and produced the expected reply. Escape cancelled the remote session with zero
+answer events. Disk remained unchanged. The latest Disco suite passed **60/60**.
+These checks verify the question UI, not autonomous completion of Task B.
 
 ## Real-model and editor observations
 

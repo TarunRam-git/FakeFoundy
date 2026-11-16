@@ -24,10 +24,15 @@ export async function createClient(baseUrl: string) {
 export class RunCancelledError extends Error {
   constructor(message = "TrueForge turn cancelled") { super(message); this.name = "RunCancelledError"; }
 }
+export class UserQuestionError extends Error {
+  constructor(message: string) { super(message); this.name = "UserQuestionError"; }
+}
 export interface RunOptions {
   signal?: AbortSignal;
   /** Native harness review of a staged batch. Missing callback denies. */
   onApproval?: () => Promise<boolean>;
+  /** Explicit user answer to a verified TrueForge built-in question; undefined cancels. */
+  onQuestion?: (question: string) => Promise<string | undefined>;
   /** A separately configured model; never silently replace the user's model. */
   fallbackModel?: string;
   /** Called after a failed attempt, before any fallback can stage new edits. */
@@ -69,6 +74,7 @@ export async function runTurn(
       let turnId: string | undefined;
       const reviewCalls = new Set<string>();
       const decided = new Set<string>();
+      const answered = new Set<string>();
       for await (const event of stream) {
         if (options.signal?.aborted) throw new RunCancelledError();
         onEvent(event);
@@ -114,6 +120,50 @@ export async function runTurn(
             decided.add(key);
           }
         }
+        if (event.type === "tool.response_required") {
+          if (!turnId || !event.toolCalls.length) throw new UserQuestionError("TrueForge requested input without a valid turn/tool identity");
+          for (const call of event.toolCalls) {
+            const key=`${event.threadId}:${call.sourceEventId}:${call.id}`;
+            if (answered.has(key)) continue;
+            // The authoritative stored message identifies the built-in; never trust a streamed name delta.
+            let events=await client.sessions.listTurnEvents(sessionId,turnId,
+              {order:"desc",limit:100},{...requestOptions,timeoutInSeconds:10});
+            let question: string | undefined;
+            for (let page=0;page<10;page++) {
+              const source=events.data.find(e=>e.id===call.sourceEventId);
+              if (source) {
+                if (source.type==="model.message" && source.threadId===event.threadId) {
+                  const tool=source.toolCalls?.find(t=>t.id===call.id);
+                  if (tool?.toolInfo.type==="truefoundry-system" && tool.toolInfo.name==="ask_user_question") {
+                    try {
+                      const args: unknown=JSON.parse(tool.function.arguments);
+                      if (args && typeof args==="object" && "question" in args && typeof args.question==="string" && args.question.trim() && args.question.length<=8000) {
+                        question=args.question;
+                        if ("options" in args && args.options!==undefined) {
+                          if (!Array.isArray(args.options) || args.options.length>20 || args.options.some(option=>typeof option!=="string" || option.length>500)) question=undefined;
+                          else if (args.options.length) question+=`\n\nOptions:\n${args.options.map(option=>`- ${option}`).join("\n")}`;
+                        }
+                        if (question && question.length>8000) question=undefined;
+                      }
+                    } catch { /* malformed arguments fail closed below */ }
+                  }
+                }
+                break;
+              }
+              if (!events.hasNextPage()) break;
+              events=await events.getNextPage();
+            }
+            if (!question) throw new UserQuestionError("TrueForge requested an unsupported or malformed client-side tool response; no action was taken");
+            if (!options.onQuestion) throw new UserQuestionError(`TrueForge needs a user answer: ${question}`);
+            const answer=await awaitReview(options.onQuestion(question),options.signal);
+            if (options.signal?.aborted || answer===undefined) throw new RunCancelledError("Question dismissed; run cancelled");
+            if (!answer.trim() || answer.length>16000) throw new UserQuestionError("Question answer must contain 1–16000 characters; no answer was sent");
+            await client.sessions.createTurnEvents(sessionId,turnId,{events:[{
+              type:"user.tool_response",threadId:event.threadId,toolCallId:call.id,content:answer,
+            }]},requestOptions);
+            answered.add(key);
+          }
+        }
         if (event.type === "turn.done") {
           if (event.state.status === "done" && event.state.requiredActions?.length)
             throw new Error("TrueForge ended with unresolved required actions; not completed");
@@ -138,7 +188,7 @@ export async function runTurn(
       await options.onAttemptFailed?.();
       if (!cleanupConfirmed) throw new Error("Could not confirm TrueForge stopped. No fallback was started; stop the local runtime before retrying.");
       if (options.signal?.aborted || error instanceof RunCancelledError) throw new RunCancelledError();
-      if (attempt + 1 === models.length) throw error;
+      if (error instanceof UserQuestionError || attempt + 1 === models.length) throw error;
       options.onFallback?.(models[attempt + 1]);
     }
   }
@@ -146,7 +196,7 @@ export async function runTurn(
 }
 
 /** A dismissed or stalled UI must not prevent cancellation/timeout cleanup. */
-async function awaitReview(review: Promise<boolean>, signal?: AbortSignal): Promise<boolean> {
+async function awaitReview<T>(review: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!signal) return review;
   if (signal.aborted) throw new RunCancelledError();
   return new Promise((resolve, reject) => {

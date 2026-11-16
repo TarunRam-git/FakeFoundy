@@ -24,3 +24,9 @@ explicit buffer application happen afterwards. A run that leaves unapproved
 changes fails closed. Live allow/deny/cancel protocol checks passed. The VS Code native-diff and
 Keep staged path also passed, with same-turn approval and unchanged disk.
 That UI result does not verify every rejection/cancellation path.
+
+Built-in `ask_user_question` requests are handled through verified persisted tool
+identity and same-turn `user.tool_response` events. The editor shows the question
+and choices; Escape or cancellation stops the run. Missing, unsupported or
+malformed question requests fail clearly rather than being silently ignored.
+Real editor answer/continue and Escape cancellation paths have been verified.

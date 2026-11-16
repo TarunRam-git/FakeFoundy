@@ -57,6 +57,10 @@ Use a dedicated runtime and one active extension workspace: the connector name
 - Apply changes the editor buffer, not the file on disk. Save accepted changes
   before running external tests. Normal editor Undo is available. Changes to the
   file/buffer since proposal creation cause review to fail safely.
+- Built-in agent questions appear in the panel and an editor input box, including
+  any supplied choices. Enter an answer to continue the same turn; Escape cancels
+  the run. Unknown or malformed client-side tools fail clearly rather than leaving
+  the editor waiting. Answers are not copied into the panel or output log.
 - **FakeFoundy: Cancel Run** or the progress/panel Cancel button aborts the request,
   cancels its remote session, and discards proposals from that failed attempt.
   Earlier pending proposals are preserved. No agent tool applies edits directly.
@@ -106,7 +110,7 @@ B and real configured fallback behavior. See verification scope for exact eviden
 
 `npm test` compiles TypeScript and runs unit/transport tests, including real HTTP
 MCP calls, bounded patch composition, confinement, retry semantics, and rollback.
-The latest local run: 54 tests, 53 passed, one host-dependent isolation test
+The latest local run: 60 tests, 59 passed, one host-dependent isolation test
 skipped because this host denied sandbox network-namespace setup. This is not a
 real-model benchmark, and a skipped isolation test is not a security pass.
 

@@ -117,6 +117,26 @@ export function activate(context: vscode.ExtensionContext) {
             const id = await runTurn(client, config.get<string>("model", "openai/gpt-4.1-mini"), agentPrompt,
               (event) => panel.event(event), {
                 signal: controller.signal,
+                onQuestion: async (question) => {
+                  if (controller.signal.aborted) return undefined;
+                  panel.append(`\nWaiting for your answer:\n${question}\n`);
+                  const cancellation=new vscode.CancellationTokenSource();
+                  const cancel=()=>cancellation.cancel();
+                  controller.signal.addEventListener("abort",cancel,{once:true});
+                  try {
+                    const answer=await vscode.window.showInputBox({
+                      title:"FakeFoundy needs your answer", prompt:question, ignoreFocusOut:true,
+                      placeHolder:"Answer to continue; Escape cancels the run",
+                      validateInput:value=>value.trim() && value.length<=16000 ? undefined : "Enter an answer of 1–16000 characters",
+                    },cancellation.token);
+                    if (controller.signal.aborted) return undefined;
+                    panel.append(answer===undefined ? "Question dismissed.\n" : "Answer received; resuming…\n");
+                    return answer;
+                  } finally {
+                    controller.signal.removeEventListener("abort",cancel);
+                    cancellation.dispose();
+                  }
+                },
                 onApproval: async () => {
                   const batch = store!.list();
                   if (!batch.length || controller.signal.aborted) return false;
