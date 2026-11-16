@@ -120,3 +120,124 @@ test("duplicate fallback is not retried and unknown terminal states fail", async
     /Unknown TrueForge/);
   assert.equal(rolledBack, 1);
 });
+
+function approvalClient(record: any[], onWait?: () => void) {
+  return {sessions:{
+    create: async (request:any) => { record.push(request.agent.spec.mcpServers[0].requireApprovalForTools); return {data:{id:"s"}}; },
+    createTurnStream: async function* () {
+      yield {type:"turn.created",turnId:"t"};
+      yield {type:"model.message",threadId:"main",id:"m",toolCalls:[{id:"call",toolInfo:{type:"mcp",serverName:"fakefoundy-editor",name:"review_staged_edits"}}]};
+      onWait?.();
+      yield {type:"tool.approval_required",threadId:"main",toolCalls:[{id:"call",sourceEventId:"m"}]};
+      yield {type:"turn.done",state:{status:"done",requiredActions:[]}};
+    },
+    createTurnEvents: async (session:string,turn:string,request:any) => {record.push({session,turn,...request});},
+    cancel: async () => {record.push("cancel");},
+  }} as unknown as Parameters<typeof runTurn>[0];
+}
+test("native approval posts scoped allow on same turn, without another model turn", async () => {
+  const calls:any[]=[];
+  await runTurn(approvalClient(calls),"model","prompt",()=>{}, {onApproval:async()=>true});
+  assert.deepEqual(calls, [["review_staged_edits"],{session:"s",turn:"t",events:[{
+    type:"user.tool_approval",threadId:"main",toolCallId:"call",approval:{status:"allow"},
+  }]}]);
+});
+test("native approval denies on rejection or missing reviewer", async () => {
+  for (const onApproval of [undefined, async()=>false]) {
+    const calls:any[]=[];
+    await runTurn(approvalClient(calls),"model","prompt",()=>{}, {onApproval});
+    assert.equal(calls[1].events[0].approval.status,"deny");
+  }
+});
+test("cancel or deadline abort during stalled approval stops remote and never sends allow", async () => {
+  for (const delay of [0, 10]) {
+    const calls:any[]=[]; const controller=new AbortController();
+    await assert.rejects(runTurn(approvalClient(calls),"model","prompt",()=>{}, {
+      signal:controller.signal,
+      onApproval:()=>{setTimeout(()=>controller.abort(),delay); return new Promise<boolean>(()=>{});},
+    }), /cancelled/);
+    assert.deepEqual(calls,[["review_staged_edits"],"cancel"]);
+  }
+});
+test("pending native actions cannot be reported as terminal success", async () => {
+  await assert.rejects(runTurn(fakeClient([{type:"turn.done",state:{status:"done",requiredActions:[{type:"mcp.auth_required"}]}}]),
+    "model","prompt",()=>{}), /unresolved required actions/);
+});
+
+test("unresolved approval requires remote cleanup before fallback; failed cleanup blocks it", async () => {
+  for (const cleanupFails of [false, true]) {
+    const calls:string[]=[]; let attempt=0;
+    const client={sessions:{
+      create:async()=>{calls.push("create"); return {data:{id:`s${++attempt}`}};},
+      createTurnStream:async function*(){yield {type:"turn.done",state:{status:"done",requiredActions:attempt===1?[{type:"tool.approval_required"}]:[]}};},
+      cancel:async()=>{calls.push("cancel"); if(cleanupFails) throw new Error("unreachable");},
+    }} as unknown as Parameters<typeof runTurn>[0];
+    const result=runTurn(client,"primary","prompt",()=>{}, {fallbackModel:"fallback"});
+    if(cleanupFails) {
+      await assert.rejects(result,/Could not confirm TrueForge stopped/);
+      assert.deepEqual(calls,["create","cancel"]);
+    } else {
+      assert.equal(await result,"s2");
+      assert.deepEqual(calls,["create","cancel","create"]);
+    }
+  }
+});
+
+test("unknown native approval is denied and duplicate requests are not posted twice", async () => {
+  const posted:any[]=[]; let reviewed=0;
+  const event={type:"tool.approval_required",threadId:"main",toolCalls:[{id:"unknown",sourceEventId:"unseen"}]};
+  const client={sessions:{
+    create:async()=>({data:{id:"s"}}),
+    createTurnStream:async function*(){
+      yield {type:"turn.created",turnId:"t"}; yield event; yield event;
+      yield {type:"turn.done",state:{status:"done",requiredActions:[]}};
+    },
+    createTurnEvents:async (_s:string,_t:string,request:any)=>{posted.push(request);},
+    listTurnEvents:async()=>({data:[],hasNextPage:()=>false}),
+  }} as unknown as Parameters<typeof runTurn>[0];
+  await runTurn(client,"model","prompt",()=>{}, {onApproval:async()=>{reviewed++; return true;}});
+  assert.equal(reviewed,0); assert.equal(posted.length,1);
+  assert.equal(posted[0].events[0].approval.status,"deny");
+});
+
+test("delta-only SSE resolves exact persisted approval source, never trusts unrelated tool metadata", async () => {
+  for (const valid of [true,false]) {
+    let reviews=0; const posted:any[]=[];
+    const client={sessions:{
+      create:async()=>({data:{id:"s"}}),
+      createTurnStream:async function*(){
+        yield {type:"turn.created",turnId:"t"};
+        yield {type:"model.message.delta",id:"m",threadId:"main",content:""};
+        yield {type:"tool.approval_required",threadId:"main",toolCalls:[{id:"c",sourceEventId:"m"}]};
+        yield {type:"turn.done",state:{status:"done",requiredActions:[]}};
+      },
+      listTurnEvents:async()=>({data:[{type:"model.message",id:"m",threadId:"main",toolCalls:[{
+        id:"c",toolInfo:{type:"mcp",serverName:valid?"fakefoundy-editor":"other-server",name:"review_staged_edits"},
+      }]}],hasNextPage:()=>false}),
+      createTurnEvents:async(_s:string,_t:string,r:any)=>{posted.push(r);},
+    }} as unknown as Parameters<typeof runTurn>[0];
+    await runTurn(client,"model","prompt",()=>{}, {onApproval:async()=>{reviews++;return true;}});
+    assert.equal(reviews,valid?1:0);
+    assert.equal(posted[0].events[0].approval.status,valid?"allow":"deny");
+  }
+});
+
+test("approval identity lookup follows returned SDK pagination pages", async () => {
+  let reviews=0, pages=0; const posted:any[]=[];
+  const client={sessions:{
+    create:async()=>({data:{id:"s"}}),
+    createTurnStream:async function*(){
+      yield {type:"turn.created",turnId:"t"};
+      yield {type:"tool.approval_required",threadId:"main",toolCalls:[{id:"c",sourceEventId:"m"}]};
+      yield {type:"turn.done",state:{status:"done",requiredActions:[]}};
+    },
+    listTurnEvents:async()=>({data:[],hasNextPage:()=>true,getNextPage:async()=>{
+      pages++; return {data:[{type:"model.message",id:"m",threadId:"main",toolCalls:[{
+        id:"c",toolInfo:{type:"mcp",serverName:"fakefoundy-editor",name:"review_staged_edits"},
+      }]}],hasNextPage:()=>false};
+    }}),
+    createTurnEvents:async(_s:string,_t:string,r:any)=>{posted.push(r);},
+  }} as unknown as Parameters<typeof runTurn>[0];
+  await runTurn(client,"model","prompt",()=>{}, {onApproval:async()=>{reviews++;return true;}});
+  assert.equal(pages,1); assert.equal(reviews,1); assert.equal(posted[0].events[0].approval.status,"allow");
+});

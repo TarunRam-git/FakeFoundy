@@ -5,7 +5,8 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { z } from "zod";
 import { ProposalStore } from "./proposals.js";
 import { runReadOnlyTerminal, TerminalApproval } from "./terminal.js";
-export async function startBridge(store: ProposalStore, port = 31337, options: {approveTerminal?: TerminalApproval} = {}) {
+export async function startBridge(store: ProposalStore, port = 31337, options: {approveTerminal?: TerminalApproval; terminalSignal?: () => AbortSignal | undefined} = {}) {
+  const terminalLifetime = new AbortController();
   const token = randomBytes(32).toString("hex");
   const active = new Set<McpServer>();
   const server: Server = createServer(async (req, res) => {
@@ -70,6 +71,10 @@ export async function startBridge(store: ProposalStore, port = 31337, options: {
       const p=await store.proposePatch(path,old_text,new_text);
       return {content:[{type:"text",text:JSON.stringify({proposalId:p.id,status:"pending_editor_review",hunks:p.hunks.map(h=>({id:h.id,startLine:h.start+1,deletedLines:h.deleteCount}))})}]};
     });
+    mcp.registerTool("review_staged_edits", {
+      description: "After all patches are staged, request native TrueForge approval of the batch. Shows editor diffs; approval keeps proposals staged, never applies or saves files. Call before finishing; respect denial.",
+      inputSchema: {}, annotations:{readOnlyHint:true},
+    }, async ()=>({content:[{type:"text",text:JSON.stringify({status:"reviewed_pending_explicit_editor_apply",proposalCount:store.list().length})}]}));
     // Legacy name remains only to return an actionable error to older prompts.
     mcp.registerTool("propose_edit", {
       description: "DISABLED: full-file replacement is unsafe for existing files. Use propose_patch for bounded, disjoint original-text replacements or propose_selection for inline edits.",
@@ -77,11 +82,11 @@ export async function startBridge(store: ProposalStore, port = 31337, options: {
       annotations:{readOnlyHint:true},
     }, async ()=>({isError:true,content:[{type:"text",text:"Full-file replacement is disabled. Use propose_patch on bounded original-text ranges; disjoint patches compose. For inline edits use propose_selection. Never delete unrelated code or tests to work around an edit conflict."}]}));
     mcp.registerTool("run_terminal", {
-      description: "Approval-gated read-only terminal recipes, NOT a shell: pwd; ls (bounded recursive file inventory); cat with one relative workspace path. No flags, scripts, builds, network, or writes. Unsupported commands stay unsupported after approval.",
-      inputSchema: {command:z.string().max(64),args:z.array(z.string().max(1024)).max(8).default([])},
-      annotations:{readOnlyHint:true,destructiveHint:false,openWorldHint:false},
+      description: "Explicit-approval terminal: read-only pwd/ls/cat; or python3 -m pytest/unittest in mandatory Linux sandbox using a filtered workspace snapshot with staged patches. No shell, network, host writes, credential mounts, or dependency installation. Test code executes only after approval. Missing sandbox/dependencies fail closed.",
+      inputSchema: {command:z.string().max(64),args:z.array(z.string().max(1024)).max(16).default([])},
+      annotations:{readOnlyHint:false,destructiveHint:false,openWorldHint:false},
     }, async ({command,args})=>{
-      const result=await runReadOnlyTerminal(store,{command,args},options.approveTerminal);
+      const result=await runReadOnlyTerminal(store,{command,args},options.approveTerminal, AbortSignal.any([terminalLifetime.signal, ...[options.terminalSignal?.()].filter((s): s is AbortSignal=>!!s)]));
       return {isError:result.status!=="completed",content:[{type:"text",text:JSON.stringify(result)}]};
     });
     const transport = new StreamableHTTPServerTransport({
@@ -107,6 +112,7 @@ export async function startBridge(store: ProposalStore, port = 31337, options: {
     url: `http://127.0.0.1:${typeof address === "object" && address ? address.port : port}/mcp`,
     token,
     close: async () => {
+      terminalLifetime.abort();
       for (const s of active) await s.close();
       await new Promise<void>((ok) => server.close(() => ok()));
     },

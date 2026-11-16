@@ -9,7 +9,7 @@ export const instructions = [
   "After locating the affected implementation, tests and documentation, stage the smallest justified patches promptly. Do not explore unrelated files or keep searching after enough evidence exists. After eight read/search calls, assess what is missing: either stage the supported changes or name the precise blocker before making further targeted reads. Never claim completion when edits are missing.",
   "Use propose_patch for bounded, disjoint changes against ORIGINAL disk text; same-file patches compose. Read tools still show original content, not staged replacements. Preserve unrelated code and tests. Full-file propose_edit is disabled. For inline tasks use propose_selection with replacement text only.",
   "Tool JSON text fields are strings: use actual newline characters in old_text/new_text, encoded once for JSON transport. Never double-escape newlines into literal backslash-n characters. Copy a short unique original anchor exactly, including indentation. When a patch errors, follow its specific guidance and correct the argument; do not restart discovery or repeat an unchanged failing call. Stop and explain an unresolved blocker after two corrected failures.",
-  "All proposals require editor review; never claim pending edits were applied. Summarize staged files and remaining caveats when finished.",
+  "After staging changes, call review_staged_edits exactly once for the current batch before finishing; the harness pauses for native approval. If denied, do not recreate those edits unless the user asks. All proposals require editor review; never claim pending edits were applied. Summarize staged files and remaining caveats when finished.",
 ].join(" ");
 export async function createClient(baseUrl: string) {
   const url = new URL(baseUrl);
@@ -26,6 +26,8 @@ export class RunCancelledError extends Error {
 }
 export interface RunOptions {
   signal?: AbortSignal;
+  /** Native harness review of a staged batch. Missing callback denies. */
+  onApproval?: () => Promise<boolean>;
   /** A separately configured model; never silently replace the user's model. */
   fallbackModel?: string;
   /** Called after a failed attempt, before any fallback can stage new edits. */
@@ -56,7 +58,7 @@ export async function runTurn(
         agent: { spec: {
           instructions,
           model: { name: models[attempt] },
-          mcpServers: [{ name: "fakefoundy-editor", preload: true, requireApprovalForTools: [] }],
+          mcpServers: [{ name: "fakefoundy-editor", preload: true, requireApprovalForTools: ["review_staged_edits"] }],
         } },
       }, requestOptions);
       sessionId = session.data.id;
@@ -64,10 +66,57 @@ export async function runTurn(
       const stream = await client.sessions.createTurnStream(sessionId, {
         input: [{ type: "user.message", content: prompt }],
       }, requestOptions);
+      let turnId: string | undefined;
+      const reviewCalls = new Set<string>();
+      const decided = new Set<string>();
       for await (const event of stream) {
         if (options.signal?.aborted) throw new RunCancelledError();
         onEvent(event);
+        if (event.type === "turn.created") turnId = event.turnId;
+        if (event.type === "model.message") for (const call of event.toolCalls ?? []) {
+          const info = call.toolInfo;
+          if (info.type === "mcp" && info.serverName === "fakefoundy-editor" && info.name === "review_staged_edits")
+            reviewCalls.add(`${event.threadId}:${event.id}:${call.id}`);
+        }
+        if (event.type === "tool.approval_required") {
+          if (!turnId) throw new Error("Approval arrived without a turn identity");
+          for (const call of event.toolCalls) {
+            const key = `${event.threadId}:${call.sourceEventId}:${call.id}`;
+            if (decided.has(key)) continue;
+            let allowed = false;
+            // SSE may carry only deltas, not the final enriched model.message.
+            // Resolve the authoritative persisted event rather than trusting a tool name delta.
+            if (!reviewCalls.has(key)) {
+              let events = await client.sessions.listTurnEvents(sessionId, turnId,
+                {order:"desc",limit:100}, {...requestOptions, timeoutInSeconds:10});
+              for (let page = 0; page < 10; page++) {
+                const source = events.data.find(e => e.id === call.sourceEventId);
+                if (source) {
+                  if (source.type === "model.message" && source.threadId === event.threadId) {
+                    const tool = source.toolCalls?.find(t => t.id === call.id)?.toolInfo;
+                    if (tool?.type === "mcp" && tool.serverName === "fakefoundy-editor" && tool.name === "review_staged_edits")
+                      reviewCalls.add(key);
+                  }
+                  break;
+                }
+                if (!events.hasNextPage()) break;
+                events = await events.getNextPage();
+              }
+            }
+            if (reviewCalls.has(key) && options.onApproval) {
+              allowed = await awaitReview(options.onApproval(), options.signal);
+            }
+            if (options.signal?.aborted) throw new RunCancelledError();
+            await client.sessions.createTurnEvents(sessionId, turnId, { events: [{
+              type: "user.tool_approval", threadId: event.threadId, toolCallId: call.id,
+              approval: allowed ? {status: "allow"} : {status: "deny", reason: "Editor review denied or unavailable"},
+            }] }, requestOptions);
+            decided.add(key);
+          }
+        }
         if (event.type === "turn.done") {
+          if (event.state.status === "done" && event.state.requiredActions?.length)
+            throw new Error("TrueForge ended with unresolved required actions; not completed");
           terminal = true;
           if (event.state.status === "error")
             throw new Error(`TrueForge turn failed: ${event.state.message}`);
@@ -94,4 +143,17 @@ export async function runTurn(
     }
   }
   throw new Error("No model configured");
+}
+
+/** A dismissed or stalled UI must not prevent cancellation/timeout cleanup. */
+async function awaitReview(review: Promise<boolean>, signal?: AbortSignal): Promise<boolean> {
+  if (!signal) return review;
+  if (signal.aborted) throw new RunCancelledError();
+  return new Promise((resolve, reject) => {
+    const abort = () => { signal.removeEventListener("abort", abort); reject(new RunCancelledError()); };
+    signal.addEventListener("abort", abort, {once:true});
+    review.then(value => { signal.removeEventListener("abort", abort); resolve(value); }, error => {
+      signal.removeEventListener("abort", abort); reject(error);
+    });
+  });
 }

@@ -1,59 +1,120 @@
 # FakeFoundy
 
-Early VS Code extension integration proof for TrueFoundry Forge-a-thon.
-**Not a complete competition submission.** This repository is built from scratch;
-TrueForge is a separately installed runtime, not vendored source.
+A VS Code coding-agent extension for the TrueFoundry Forge-a-thon, built from
+scratch. TrueForge owns model execution and the agent/tool loop; the extension
+provides workspace tools, bounded context, streaming UI, and explicit diff review.
+TrueForge is a separately installed dependency, not vendored source.
 
-## Requirements and setup
+**Working implementation, not yet a fully verified competition submission.**
+Real Flask Task A checks and failure-path Task C have passed. Task A needed a
+follow-up doc correction, and Task B needed assisted corrections, so neither is
+recorded as a pristine one-request pass.
+See [verification scope](docs/verification.md).
 
-- Node.js >=22.14; VS Code >=1.96.
-- `npm ci`, then `npm test`.
-- `HOST=127.0.0.1 npm run trueforge` starts the pinned runtime on port 8790.
-  Keep local mode on loopback; never expose it publicly.
-- Open http://127.0.0.1:8790 and configure a model provider in TrueForge.
-  Keep actual API keys in the runtime's local configuration, never this repository.
-- Open this folder in VS Code, press F5 to launch the Extension Development Host.
-- Open a small disposable workspace there and set `fakefoundy.model` to the
-  configured TrueForge model FQN (for example `openai/gpt-4.1-mini`).
-- Run **FakeFoundy: Start TrueForge Agent**. Example: "Read hello.txt and propose
-  replacing its contents with a greeting." Events stream to the FakeFoundy output
-  channel. The session ID is printed at completion.
-- Run **FakeFoundy: Review Proposed Edit** to open a native diff and explicitly
-  apply/reject the full-file proposal. Apply edits the buffer using WorkspaceEdit;
-  it does not auto-save. Standard editor undo is available.
+## Local setup
 
-The bridge binds only 127.0.0.1, authenticates with a random per-process token,
-confines paths including symlinks to the first workspace folder, and refuses stale
-proposals. A local connector named `fakefoundy-editor` is updated when starting;
-use a dedicated local TrueForge instance, because this prototype has one fixed
-connector name. Reload the window after changing workspace folders.
+1. Install Node.js >=22.14 and VS Code >=1.96.
+2. In this repository run `npm ci`, then `npm test`.
+3. Start a dedicated local runtime: `HOST=127.0.0.1 npm run trueforge`.
+   Runtime 0.185.1 and SDK 0.185.0 are pinned. The launcher enables bounded native
+   provider retries; see [retry behavior](docs/runtime-retries.md).
+4. Open http://127.0.0.1:8790 and configure a provider/model in TrueForge. Keep
+   credentials in the runtime configuration, never in this repository or prompts.
+5. Open this repository in VS Code and press F5 using **Run FakeFoundy**. In the
+   Extension Development Host, open and trust a disposable workspace.
+6. Set `fakefoundy.model` to the exact configured TrueForge model FQN. The default
+   `openai/gpt-4.1-mini` is only a placeholder unless configured in your runtime.
+   `fakefoundy.baseUrl` defaults to `http://127.0.0.1:8790`.
 
-## Verification
+Keep both runtime and bridge on loopback. The bridge defaults to port 31337 and
+uses a random bearer capability. A runtime outbound-host policy may refuse its
+loopback MCP connection (and the smoke fixture's loopback model). Diagnose this
+in the dedicated runtime; the launcher does not change network/security policy
+or enable access exceptions. Do not expose the runtime publicly as a workaround.
 
-- `npm test`: TypeScript plus real HTTP MCP round-trip and proposal safety tests.
-- With a dedicated TrueForge instance running, `node scripts/smoke.mjs`: real
-  TrueForge session/stream/tool loop against a deterministic LOCAL fake model.
-  This test creates/replaces a `fakefoundy-smoke` provider and the editor connector.
-  It checks read/propose-edit tool execution and verifies unchanged disk content.
-  **It is not evidence of real-model reasoning or passing the Flask tasks.**
+Use a dedicated runtime and one active extension workspace: the connector name
+`fakefoundy-editor` is shared, and each extension run updates that connector.
 
-## Scope and remaining work
+## Use
 
-Implemented: minimal command UI, SDK sessions and streamed events, authenticated
-MCP read/propose-edit bridge, explicit full-file diff review, editor undo path,
-workspace confinement and stale-edit checks.
+- **FakeFoundy: Open Agent Panel** opens the task input, streamed response,
+  context selection summary, Cancel button, and Review edits button.
+- **FakeFoundy: Start TrueForge Agent** accepts a task through the command palette.
+- Select code and press **Ctrl+Alt+I** (**Cmd+Alt+I** on macOS), or run
+  **FakeFoundy: Edit Selection**. Give an instruction; the resulting proposal is
+  restricted to that captured selection and opens the review flow after success.
+- Reference a file with `@file:src/example.py`, a spaced path with
+  `@file:"some directory/example.py"`, or an identifier with `@symbol:example`.
+  Symbol matching is lexical, not language-server navigation.
+- During a run, TrueForge pauses at `review_staged_edits`. The extension previews
+  the batch and asks whether to keep it staged or reject it. This does not apply
+  edits. The live protocol has been checked; the new VS Code approval gate still
+  needs end-to-end UI verification.
+- **FakeFoundy: Review Proposed Edit** opens a native diff. Choose the hunks to
+  accept, inspect the selected-only diff, then Apply or Reject. Unselected hunks
+  are discarded after confirmation. Escape preserves the proposal.
+- Apply changes the editor buffer, not the file on disk. Save accepted changes
+  before running external tests. Normal editor Undo is available. Changes to the
+  file/buffer since proposal creation cause review to fail safely.
+- **FakeFoundy: Cancel Run** or the progress/panel Cancel button aborts the request,
+  cancels its remote session, and discards proposals from that failed attempt.
+  Earlier pending proposals are preserved. No agent tool applies edits directly.
 
-Still required: real-model test; Extension Development Host UI verification;
-inline selection/keybinding flow; agent panel; workspace search and terminal MCP
-tools; multi-file discovery; budgeted retrieval and @mentions; per-hunk review;
-TrueForge approval integration; immediate cancellation; model retry/fallback;
-all Flask A/B/C demos; final PDF/video and public submission.
+Context retrieval automatically ranks bounded excerpts using path/text relevance
+and explicit references. The panel shows chosen paths, reasons, and byte usage.
+`fakefoundy.contextBudgetBytes` defaults to 16000 (256–65536). This bounds initial
+retrieved excerpts, **not** the user prompt or all subsequent tool output. File
+reads are paginated; discovery/search exclude protected and generated paths.
 
-This prototype must not be represented as having passed eligibility or the
-competition tasks yet. See `docs/verification.md` for tested scope.
+Optional settings: `fakefoundy.fallbackModel` selects one separately configured
+fallback; failed-attempt proposals are discarded before it runs.
+`fakefoundy.runTimeoutSeconds` defaults to 300 and covers the whole run, including
+fallback. Unconfirmed remote cancellation stops fallback rather than starting
+another potentially concurrent attempt.
 
-Use Conventional Commits, e.g. `feat(agent): stream TrueForge turns` and
-`test(mcp): verify proposal isolation`. Runtime 0.185.1 and SDK 0.185.0 are pinned
-independently because those are the available compatible release versions tested.
+## Tools and limitations
 
-Sources: https://github.com/truefoundry/trueforge and https://trueforge.dev/api/overview
+The MCP bridge supports discovery, search, bounded file reads, selection
+replacement, and composing small disjoint patches against original disk text.
+Full-file model replacement is disabled. Proposed text remains staged until
+editor approval. Reads do not include pending patches or unsaved editor edits;
+save accepted edits before starting a dependent task.
+
+The terminal tool retains guarded read-only `pwd`, `ls`, and `cat` recipes. It also
+supports fixed `python3 -m pytest` / `python3 -m unittest` recipes with bounded
+arguments and explicit one-time approval. Executable recipes require non-root
+Linux with `/usr/bin/bwrap`, `/usr/bin/prlimit`, `/usr/bin/python3` and permitted
+user/network namespaces. There is **no unsandboxed fallback**.
+
+Tests run in a temporary filtered text snapshot including staged patches, not the
+real workspace. The snapshot is read-only inside the sandbox; network, host home,
+credentials and dependency installation are unavailable. Only system Python
+packages are visible, not project virtualenvs. Bounds: 500 files, 20 MiB snapshot,
+30 seconds, 256 MiB address space, no subprocess creation and 16 KiB combined
+output. These restrictions can reject otherwise valid suites. Save/apply is not
+required for snapshot tests, but remains required for external tests. General
+shells, arbitrary Python commands, Flask CLI execution and builds are unsupported.
+
+Native TrueForge approval now gates keeping a staged batch; per-hunk selection
+and editor Apply are a separate later step. Do not equate the protocol check with
+verified end-to-end approval UI or complete competition scoring compliance.
+Outstanding validation includes autonomous fixed-task B, the new approval UI,
+and real configured fallback behavior. See verification scope for exact evidence.
+
+## Tests
+
+`npm test` compiles TypeScript and runs unit/transport tests, including real HTTP
+MCP calls, bounded patch composition, confinement, retry semantics, and rollback.
+The latest local run: 54 tests, 53 passed, one host-dependent isolation test
+skipped because this host denied sandbox network-namespace setup. This is not a
+real-model benchmark, and a skipped isolation test is not a security pass.
+
+`npm run smoke` uses a separately running dedicated TrueForge instance and a
+**deterministic local fake model** to test transport wiring. It creates/replaces
+the `fakefoundy-smoke` provider and editor connector. It requires permitted local
+runtime connections and does not prove real-model reasoning or Flask success.
+
+Use Conventional Commits and preserve the MIT license. Agent definition:
+[agents/README.md](agents/README.md). Upstream references:
+[TrueForge](https://github.com/truefoundry/trueforge),
+[API overview](https://trueforge.dev/api/overview).

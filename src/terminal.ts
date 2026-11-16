@@ -1,3 +1,4 @@
+import { runSandboxTerminal, isSandboxRecipe } from "./sandboxTerminal.js";
 import { isAbsolute } from "node:path";
 import { realpath } from "node:fs/promises";
 import { ProposalStore } from "./proposals.js";
@@ -5,10 +6,12 @@ import { ProposalStore } from "./proposals.js";
 export interface TerminalRequest {
   command: string;
   args: readonly string[];
+  execution?: "sandbox";
 }
 export type TerminalApproval = (request: TerminalRequest) => Promise<boolean>;
 export interface TerminalResult {
-  status: "completed" | "denied" | "unsupported";
+  status: "completed" | "denied" | "unsupported" | "failed" | "cancelled" | "timed_out";
+  exitCode?: number | null;
   stdout: string;
   stderr: string;
   truncated: boolean;
@@ -30,7 +33,9 @@ export async function runReadOnlyTerminal(
   store: ProposalStore,
   input: TerminalRequest,
   approve?: TerminalApproval,
+  signal?: AbortSignal,
 ): Promise<TerminalResult> {
+  if (isSandboxRecipe(input)) return runSandboxTerminal(store, input, approve, signal);
   // Copy before awaiting UI approval so callers cannot change the approved request.
   const request = Object.freeze({command:input.command,args:Object.freeze([...input.args])});
   const noArgs = request.args.length === 0;
@@ -48,6 +53,7 @@ export async function runReadOnlyTerminal(
   if (!approve || !(await approve(request))) return {
     status:"denied",stdout:"",stderr:"Explicit editor approval was not granted; nothing was read or executed.",truncated:false,
   };
+  if (signal?.aborted) return {status:"cancelled",stdout:"",stderr:"Cancelled before read.",truncated:false};
   let output: string;
   let truncated = false;
   if (request.command === "pwd") output = `${await realpath(store.root)}\n`;
