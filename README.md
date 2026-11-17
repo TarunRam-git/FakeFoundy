@@ -5,32 +5,43 @@ scratch. TrueForge owns model execution and the agent/tool loop; the extension
 provides workspace tools, bounded context, streaming UI, and explicit diff review.
 TrueForge is a separately installed dependency, not vendored source.
 
-**Working implementation, not yet a fully verified competition submission.**
-Real Flask Task A checks and failure-path Task C have passed. Task A needed a
-follow-up doc correction, and Task B needed assisted corrections, so neither is
-recorded as a pristine one-request pass.
-See [verification scope](docs/verification.md).
+On Flask 3.1.3, the exact Task B prompt completed in Code OSS using Gemini
+3.5 Flash-Lite. The agent discovered and edited the CLI, tests and docs in one
+turn. After native approval, hunk review and Save, 59 CLI tests and 491 Flask
+tests passed. CLI help listed the new command and its JSON masked all four
+sensitive key categories. Task A passed with an exhaustive docstring, and Task C automatically switched from an unreachable endpoint to Gemini with a clean workspace. See [the Round 1 verification](docs/verification.md).
 
 ## Local setup
 
 1. Install Node.js >=22.14 and VS Code >=1.96.
 2. In this repository run `npm ci`, then `npm test`.
-3. Start a dedicated local runtime: `HOST=127.0.0.1 npm run trueforge`.
+3. Start the dedicated local runtime with its local editor connector enabled:
+   `HOST=127.0.0.1 OUTBOUND_URL_ALLOWED_HOSTS='["127.0.0.1","generativelanguage.googleapis.com"]' npm run trueforge`.
+   This process permits its tools to reach services on IPv4 loopback. Use it only
+   for your trusted local workspace. The example allows the Google Gemini API;
+   use your configured provider hostname when switching providers.
    Runtime 0.185.1 and SDK 0.185.0 are pinned. The launcher enables bounded native
    provider retries; see [retry behavior](docs/runtime-retries.md).
 4. Open http://127.0.0.1:8790 and configure a provider/model in TrueForge. Keep
    credentials in the runtime configuration, never in this repository or prompts.
+   [Gemini provider example](examples/gemini-provider.json) shows the local HTTP API fields.
+   Use the dashboard to enter the real values.
 5. Open this repository in VS Code and press F5 using **Run FakeFoundy**. In the
    Extension Development Host, open and trust a disposable workspace.
-6. Set `fakefoundy.model` to the exact configured TrueForge model FQN. The default
+6. Enter the values from [the example VS Code model settings](examples/model-settings.json)
+   in the Development Host's user settings. The example matches the verified rehearsal
+   (96000 initial context bytes and a ten-minute deadline for provider backoff).
+   For the example, configure the Google
+   Gemini provider in TrueForge, enter your API key there, and name a model
+   `demo` with the upstream model ID available to your account. If your provider
+   or model has another name, set `fakefoundy.model` to its exact TrueForge FQN.
+   On each run the extension sends the agent definition in `src/client.ts` when
+   creating the session. The default
    `openai/gpt-4.1-mini` is only a placeholder unless configured in your runtime.
    `fakefoundy.baseUrl` defaults to `http://127.0.0.1:8790`.
 
 Keep both runtime and bridge on loopback. The bridge defaults to port 31337 and
-uses a random bearer capability. A runtime outbound-host policy may refuse its
-loopback MCP connection (and the smoke fixture's loopback model). Diagnose this
-in the dedicated runtime; the launcher does not change network/security policy
-or enable access exceptions. Do not expose the runtime publicly as a workaround.
+uses a random bearer capability. The runtime must be able to reach this bridge. The setup command grants the loopback exception for that runtime process only.
 
 Use a dedicated runtime and one active extension workspace: the connector name
 `fakefoundy-editor` is shared, and each extension run updates that connector.
@@ -65,11 +76,14 @@ Use a dedicated runtime and one active extension workspace: the connector name
   cancels its remote session, and discards proposals from that failed attempt.
   Earlier pending proposals are preserved. No agent tool applies edits directly.
 
-Context retrieval automatically ranks bounded excerpts using path/text relevance
-and explicit references. The panel shows chosen paths, reasons, and byte usage.
-`fakefoundy.contextBudgetBytes` defaults to 16000 (256–65536). This bounds initial
-retrieved excerpts, **not** the user prompt or all subsequent tool output. File
-reads are paginated; discovery/search exclude protected and generated paths.
+The panel shows which files retrieval selected, why it chose them, and how many
+UTF-8 bytes they used. `fakefoundy.contextBudgetBytes` defaults to 16000
+(256–131072). If the top three files fit within 85% of that budget, they are
+included in full. The recording profile uses 96000 bytes for agent mode. Inline
+requests cap retrieval at 16000 bytes and include the exact selected text.
+This budget covers the initial repository context. File
+reads are paginated; the related-file reader returns outlines and targeted excerpts
+for up to three files in one call below TrueForge’s response limit. Discovery/search exclude protected and generated paths.
 
 Optional settings: `fakefoundy.fallbackModel` selects one separately configured
 fallback; failed-attempt proposals are discarded before it runs.
@@ -104,17 +118,15 @@ shells, arbitrary Python commands, Flask CLI execution and builds are unsupporte
 
 Native TrueForge approval now gates keeping a staged batch; per-hunk selection
 and editor Apply are a separate later step. The Keep staged UI path has been
-verified; UI batch rejection/cancellation and complete competition scoring
-compliance are not claimed. Outstanding validation includes autonomous fixed-task
-B and real configured fallback behavior. See verification scope for exact evidence.
+verified; the current editor also preserved an earlier proposal when a later batch was
+rejected or cancelled using a scripted provider. The Round 1 verification records the live provider and fixed-task checks.
 
 ## Tests
 
 `npm test` compiles TypeScript and runs unit/transport tests, including real HTTP
 MCP calls, bounded patch composition, confinement, retry semantics, and rollback.
-The latest local run: 63 tests, 62 passed, one host-dependent isolation test
-skipped because this host denied sandbox network-namespace setup. This is not a
-real-model benchmark, and a skipped isolation test is not a security pass.
+The November 17 local run passed all 64 tests, including the sandbox isolation
+check. The real-model Flask runs are documented separately.
 
 `npm run smoke` uses a separately running dedicated TrueForge instance and a
 **deterministic local fake model** to test transport wiring. It creates/replaces

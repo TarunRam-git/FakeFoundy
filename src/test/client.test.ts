@@ -201,7 +201,17 @@ test("unknown native approval is denied and duplicate requests are not posted tw
 });
 
 test("delta-only SSE resolves exact persisted approval source, never trusts unrelated tool metadata", async () => {
-  for (const valid of [true,false]) {
+  const wrapper = {type:"truefoundry-system", name:"call_tool"};
+  const args = {mcp_server:"fakefoundy-editor", tool_name:"review_staged_edits", input:{}};
+  const cases = [
+    {valid:true, toolInfo:{type:"mcp",serverName:"fakefoundy-editor",name:"review_staged_edits"}},
+    {valid:false, toolInfo:{type:"mcp",serverName:"other-server",name:"review_staged_edits"}},
+    {valid:true, toolInfo:wrapper, args},
+    {valid:false, toolInfo:wrapper, args:{...args, tool_name:"run_terminal"}},
+    {valid:false, toolInfo:wrapper, args:{...args, mcp_server:"other-server"}},
+  ];
+  for (const entry of cases) {
+    const valid = entry.valid;
     let reviews=0; const posted:any[]=[];
     const client={sessions:{
       create:async()=>({data:{id:"s"}}),
@@ -212,7 +222,7 @@ test("delta-only SSE resolves exact persisted approval source, never trusts unre
         yield {type:"turn.done",state:{status:"done",requiredActions:[]}};
       },
       listTurnEvents:async()=>({data:[{type:"model.message",id:"m",threadId:"main",toolCalls:[{
-        id:"c",toolInfo:{type:"mcp",serverName:valid?"fakefoundy-editor":"other-server",name:"review_staged_edits"},
+        id:"c",toolInfo:entry.toolInfo, function:{arguments:JSON.stringify(entry.args)},
       }]}],hasNextPage:()=>false}),
       createTurnEvents:async(_s:string,_t:string,r:any)=>{posted.push(r);},
     }} as unknown as Parameters<typeof runTurn>[0];

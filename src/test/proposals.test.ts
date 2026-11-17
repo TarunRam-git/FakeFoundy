@@ -45,8 +45,23 @@ test("real MCP transport reads and stages, rejects unauthenticated requests", as
     const listed = await client.listTools();
     assert.deepEqual(
       listed.tools.map((t) => t.name),
-      ["list_files", "search_files", "fakefoundy_read_file", "read_file", "propose_selection", "propose_patch", "review_staged_edits", "propose_edit", "run_terminal"],
+      ["list_files", "search_files", "read_related_files", "fakefoundy_read_file", "read_file", "propose_selection", "propose_patch", "review_staged_edits", "propose_edit", "run_terminal"],
     );
+    await writeFile(join(root,"b.txt"), "related");
+    await writeFile(join(root,"long.txt"), "x".repeat(49000));
+    const batch = await client.callTool({name:"read_related_files",arguments:{files:[{path:"a.txt"},{path:"b.txt"},{path:"long.txt"}]}});
+    const texts = (batch.content as {text:string}[]).map(item => item.text);
+    assert.deepEqual(texts.slice(0,2), ["a.txt\nbefore", "b.txt\nrelated"]);
+    assert.ok(texts.join("").length < 24000);
+    assert.match(texts[2], /Last characters:/);
+    await writeFile(join(root,"long.txt"), "first\n" + "gap\n".repeat(5000) + "def requested():\n    return 7\n");
+    const anchored = await client.callTool({name:"read_related_files",arguments:{files:[{path:"long.txt",query:"requested"}]}});
+    assert.match((anchored.content as {text:string}[])[0].text, /match at 5002:[\s\S]*def requested\(\):\n    return 7/);
+    const scoped = await client.callTool({name:"search_files",arguments:{path:"b.txt",query:"before"}});
+    assert.deepEqual(JSON.parse((scoped.content as {text:string}[])[0].text).matches, []);
+    await writeFile(join(root,".env"), "private");
+    const denied = await client.callTool({name:"read_related_files",arguments:{files:[{path:"a.txt"},{path:".env"}]}});
+    assert.equal(denied.isError,true);
     const range = await client.callTool({name:"fakefoundy_read_file",arguments:{path:"a.txt",start_line:1,max_lines:1}});
     const rangeContent = range.content as {type:string;text?:string}[];
     assert.deepEqual(JSON.parse(rangeContent[0].text!), {path:"a.txt",start_line:1,start_column:0,text:"before",total_lines:1,has_more:false,next:null});

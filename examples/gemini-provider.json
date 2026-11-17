@@ -1,0 +1,9 @@
+{
+  "manifest": {
+    "type": "google-gemini",
+    "auth": { "api_key": "REPLACE_IN_LOCAL_TRUEFORGE_ONLY" },
+    "models": [
+      { "name": "demo", "model_id": "gemini-3.5-flash-lite", "properties": {} }
+    ]
+  }
+}

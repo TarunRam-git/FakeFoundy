@@ -198,13 +198,14 @@ export class ProposalStore {
     }
     return {files, truncated: pending.length > 0 || files.length >= cap || scanned >= 5000};
   }
-  async search(query: string, limit = 50) {
+  async search(query: string, limit = 50, onlyPath?: string) {
     if (!query) throw new Error("Search text must not be empty");
-    const candidates = await this.discover("", 500);
+    const candidates = await this.discover(onlyPath ?? "", 500);
     const matches: {path:string; line:number; text:string}[] = [];
     const cap = Math.max(1, Math.min(limit, 100));
     let bytes = 0;
     for (const path of candidates.files) {
+      if (onlyPath && path !== onlyPath) continue;
       let content: string;
       try {content = await this.read(path);} catch {continue;}
       bytes += Buffer.byteLength(content);

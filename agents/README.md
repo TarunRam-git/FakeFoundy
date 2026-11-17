@@ -12,6 +12,13 @@ reflect original disk text, not pending proposals. The terminal tool supports ex
 Python pytest/unittest execution in a required Linux bubblewrap sandbox. It cannot
 run a general shell or builds; unsupported hosts fail closed.
 
+TrueForge preloads the related-file reader, selection replacement, patch and
+review tools. It defers discovery, search, pagination and terminal schemas until
+the model needs them. Keeping the review operation directly attached preserves
+its MCP identity when the harness asks for approval. For a deferred call, the client verifies the stored system tool, exact server, review operation and empty arguments before showing approval. The legacy whole-file read
+and disabled replacement are excluded. Related-file reads return outlines and
+targeted excerpts below the harness response limit.
+
 The instructions encourage targeted discovery, reuse of supplied context,
 minimal patches, and honest reporting of pending edits or blockers. Initial
 context is selected by `src/context.ts` and its budget/reasons shown in the panel.

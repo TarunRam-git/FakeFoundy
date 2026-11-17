@@ -67,7 +67,7 @@
           "type": "number",
           "default": 16000,
           "minimum": 256,
-          "maximum": 65536,
+          "maximum": 131072,
           "description": "Maximum UTF-8 bytes of retrieved context excerpts per turn. Prompt and tool results are additional."
         }
       }

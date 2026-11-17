@@ -3,9 +3,72 @@
 This separates implementation, automated checks, and observed real-model results.
 It is not a competition submission or a claim of complete eligibility.
 
-## Current automated checks
+## November 17 Round 1 checks
 
-Latest working-tree check: `npm test` completed **63 tests: 62 passed, one skipped**
+A clean dependency install and strict TypeScript build succeeded on the local Linux
+host, with all 64 project tests passing and none skipped. The earlier results below
+are retained for comparison.
+
+**Task A passed in one request** on clean Flask 3.1.3 in Code OSS with
+Google Gemini 3.5 Flash-Lite. The user selected `get_debug_flag`, supplied
+the official instruction, reviewed the native diff, applied the hunks and saved.
+The official `FLASK_DEBUG=off` command printed `False`. Fourteen inputs passed
+including missing, empty, false literals, mixed case and truthy controls.
+The saved docstring explicitly listed unset, empty, `0`, `false`, `no`, `off`
+and `n`. Earlier runs sometimes omitted the empty case from documentation.
+
+On a clean checkout of Flask 3.1.3 at `22d92470`, the exact Task B prompt scanned
+212 readable files. Before the change neither the CLI tests nor the CLI guide
+appeared in initial context. After matching filename words and distributing the
+same 16,000-byte budget across more excerpts, the first three files were
+`docs/cli.rst`, `src/flask/cli.py`, and `tests/test_cli.py` (15,929 bytes in
+total across all excerpts). This checks discovery only. The unmodified checkout
+passed its 58 baseline CLI tests using the tag's locked test dependency group.
+With a 96,000-byte recording budget, the same prompt selected those three
+files in full plus nine excerpts, using 95,420 UTF-8 bytes.
+
+One exact Gemini 3.5 Flash-Lite run found and proposed the implementation, a
+CLI test and documentation. Native review kept all three before the five-minute
+deadline expired during the final model call. Timeout correctly cleared the
+staged files. Replaying the three original tool results on a separate clean
+checkout passed 59 CLI tests and all 491 Flask tests. Help listed the new
+command, four sensitive keys were masked, and an ordinary value was preserved.
+These replay results establish the generated patch's behavior separately from
+editor Apply and completion of that timed-out session.
+
+**Task B passed end to end** in Code OSS on Flask 3.1.3. The exact prompt contained
+no file hints. The real Gemini 3.5 Flash-Lite model used TrueForge's deferred
+tool discovery and editor reads. It proposed changes to `src/flask/cli.py`,
+`tests/test_cli.py` and `docs/cli.rst`, corrected a mismatched documentation
+anchor on its own, and requested native review. The same turn finished after all
+three proposals were kept. The files stayed clean until hunk Apply and Save.
+The saved diff added 72 lines across those three files. It passed all **59 CLI
+tests** and **491 Flask tests** with the pinned project dependencies. Running
+the real command against a sample app confirmed it appeared in help, emitted
+valid JSON, masked all four secret categories, and preserved an ordinary value.
+There were no corrective user messages. Earlier rate limits, connection timeouts
+and redundant reads make run time variable.
+
+The updated extension passed Task C in Code OSS on a separate X display. With an
+unreachable **model provider** configured in a running TrueForge instance, the
+official inline instruction produced a visible ECONNREFUSED error. The command
+palette opened after the failure, and Flask's Git status stayed clean.
+
+With an automatic fallback configured, a separate exact Task A prompt on a
+clean Flask tree reached the unreachable primary model and received ECONNREFUSED.
+FakeFoundy selected the separately configured Google-hosted Gemini model itself.
+The fallback proposed the selected diff and completed native review. The command
+palette remained responsive and Git status was clean before explicit Apply.
+
+A separate editor run used a scripted provider to drive native review. Keep staged
+retained a proposal in helpers.py. Rejecting a second batch for cli.py kept only
+the earlier helpers.py proposal. Cancelling a third batch at the same gate also
+kept only helpers.py. No workspace edits were written. This verifies UI batch
+scope and cancellation separately from model reasoning.
+
+## Earlier automated checks
+
+Earlier working-tree check: `npm test` completed **63 tests: 62 passed, one skipped**
 after strict TypeScript compilation. The skipped test needs functioning sandbox
 namespaces; this host denied `NETLINK_ROUTE` setup. A skip does not verify isolation.
 The earlier committed baseline `966699c` passed 38/38. Tests cover:
@@ -79,8 +142,8 @@ notifications bell. This verifies the keep-staged UI path, not UI batch rejectio
 or cancellation. Approval retains proposals; it does not replace later hunk
 selection and explicit Apply. No complete integration-score claim is made.
 
-Still required: a clean autonomous Task B run, native approval UI
-reject/cancel paths, and real configured model fallback. Earlier test evidence
+At that revision, a clean autonomous Task B run, native approval UI
+reject/cancel paths, and real configured model fallback were still outstanding. Earlier test evidence
 must not silently be attributed to the newest working-tree changes.
 
 ## Runtime transport smoke
@@ -114,9 +177,10 @@ opened file bytes to each staged proposal's original before overlay, rejecting
 edits that arrive after initial validation.
 
 Regression tests cover exact binary bytes, secret/symlink/size rejection, and a
-user edit landing between initial validation and copying. These tests pass, but
-the latest snapshot repair has not yet been revalidated through a full live
-Flask Task B run. It does not change Task B's assisted/not-autonomous status.
+user edit landing between initial validation and copying. These tests passed.
+The November 17 Task B run used the pinned Flask virtual environment for the
+post-save pytest and CLI verification. Flask dependencies inside the isolated
+snapshot remain unverified.
 
 ## Known implementation gaps
 
@@ -125,8 +189,7 @@ Flask Task B run. It does not change Task B's assisted/not-autonomous status.
   No arbitrary shell, host fallback, Flask CLI or dependency installation exists.
 - Snapshot limits (500 files, 1 MiB per file, 20 MiB total), read-only mounts, 30-second/256 MiB/no-fork
   bounds and 16 KiB output can prevent valid projects from testing successfully.
-- Native batch approval Keep staged UI is verified; UI batch rejection and
-  cancellation through that gate remain unverified.
+- Current native approval UI results are recorded in the November 17 checks above.
 - Initial context is budgeted by UTF-8 bytes, not a whole-session token budget;
   references are lexical, not semantic language-server resolution.
 - One fixed runtime connector name limits concurrent extension instances.

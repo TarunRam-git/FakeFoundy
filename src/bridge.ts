@@ -35,12 +35,25 @@ export async function startBridge(store: ProposalStore, port = 31337, options: {
       annotations:{readOnlyHint:true},
     }, async ({query,limit})=>({content:[{type:"text",text:JSON.stringify(await store.discover(query,limit))}]}));
     mcp.registerTool("search_files", {
-      description: "Literal case-insensitive text search across discovered workspace files. Bounded results with line numbers; check truncated flag.",
-      inputSchema: {query:z.string().min(1),limit:z.number().int().min(1).max(100).optional()},
+      description: "Find a literal in the workspace, or set path to search one named file. Returns line numbers and matching text.",
+      inputSchema: {query:z.string().min(1),path:z.string().optional(),limit:z.number().int().min(1).max(100).optional()},
       annotations:{readOnlyHint:true},
-    }, async ({query,limit})=>({content:[{type:"text",text:JSON.stringify(await store.search(query,limit))}]}));
+    }, async ({query,limit,path})=>({content:[{type:"text",text:JSON.stringify(await store.search(query,limit,path))}]}));
+    mcp.registerTool("read_related_files", {
+      description: "Inspect up to three related files in one call. Small files are returned whole. For large files get a line-numbered outline and exact head/tail excerpts, or set query or start_line to show exact text near a symbol, heading or line. Make targeted follow-up reads together.",
+      inputSchema: {files:z.array(z.object({path:z.string().min(1).max(512),start_line:z.number().int().min(1).optional(),query:z.string().min(1).max(200).optional()})).min(1).max(3)},
+      annotations:{readOnlyHint:true},
+    }, async ({files}) => {
+      const content = [];
+      for (const file of files) {
+        const source = await store.read(file.path);
+        const text = relatedExcerpt(source, file.query, file.start_line);
+        content.push({type:"text" as const, text:file.path + "\n" + text});
+      }
+      return {content};
+    });
     mcp.registerTool("fakefoundy_read_file", {
-      description: "Authoritative editor file reader (not a runtime/built-in read_file). Returns exact small excerpts, never ellipses. Use start_line/max_lines, then follow next.start_line/start_column until has_more=false. Columns count UTF-16 code units; at most 8000 per response. Prefer this over generic read_file or cat.",
+      description: "Authoritative editor file reader (not a runtime/built-in read_file). Returns exact small excerpts, never ellipses. Use start_line/max_lines, use the next cursor only if the needed anchor continues onto the next page. Columns count UTF-16 code units; at most 8000 per response. Prefer this over generic read_file or cat.",
       inputSchema: {path:z.string(),start_line:z.number().int().min(1).default(1),max_lines:z.number().int().min(1).max(80).default(40),start_column:z.number().int().min(0).default(0)},
       annotations:{readOnlyHint:true},
     }, async ({path,start_line,max_lines,start_column})=>({content:[{type:"text",text:JSON.stringify(await store.readRange(path,start_line,max_lines,start_column))}]}));
@@ -117,4 +130,30 @@ export async function startBridge(store: ProposalStore, port = 31337, options: {
       await new Promise<void>((ok) => server.close(() => ok()));
     },
   };
+}
+
+// Three excerpts plus paths and MCP framing stay below TrueForge's 24k response ceiling.
+function relatedExcerpt(source: string, query?: string, startLine?: number): string {
+  if (!query && !startLine && source.length <= 6400) return source;
+  const lines = source.split("\n");
+  if (query || startLine) {
+    const offset = (startLine ?? 1) - 1;
+    if (offset >= lines.length) return "Start line is outside this file.";
+    const term = query?.toLowerCase();
+    const line = term ? lines.findIndex((value, i) => i >= offset && value.toLowerCase().includes(term)) : offset;
+    if (line < 0) return "No line matches the supplied query.";
+    const first = term ? Math.max(0, line - 4) : line;
+    return `From line ${first + 1}, match at ${line + 1}:\n` +
+      lines.slice(first, line + 65).join("\n").slice(0, 6200);
+  }
+  const outline: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (/^\s*(?:(?:async )?def |class |(?:export )?(?:async )?function |#{1,4} )/.test(lines[i]) ||
+        (lines[i].trim() && /^[=~-]{3,}\s*$/.test(lines[i + 1] ?? ""))) {
+      outline.push(`${i + 1}: ${lines[i].trim().slice(0, 110)}`);
+    }
+  }
+  const index = outline.join("\n");
+  const summary = index.length <= 3500 ? index : index.slice(0, 1500) + "\n...\n" + index.slice(-1950);
+  return `Outline (line numbers):\n${summary}\nFirst characters:\n${source.slice(0, 950)}\nLast characters:\n${source.slice(-1750)}`;
 }

@@ -29,3 +29,26 @@ test("retrieval ranks explicit and automatic evidence, enforces budget, excludes
   await assert.rejects(retrieveContext(store,'config',{signal:controller.signal}));
  } finally {await rm(root,{recursive:true,force:true});}
 });
+
+test("the initial budget includes matching code, tests and docs across distracting paths", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ff-context-family-"));
+  try {
+    const lines = "layout preview example with configuration values\n".repeat(120);
+    const paths = ["src/layout.py", "tests/test_layout.py", "docs/layout.rst",
+      "tests/preview/test_settings.py", "tests/preview/test_example.py",
+      "tests/preview/test_configuration.py", "tests/preview/test_values.py"];
+    for (const path of paths) {
+      await mkdir(join(root, path, ".."), {recursive:true});
+      await writeFile(join(root, path), lines);
+    }
+    const result = await retrieveContext(new ProposalStore(root),
+      "Add a LAYOUT option to preview configuration values. Document it and add a test.", {budgetBytes:4800});
+    for (const path of paths.slice(0,3)) assert.ok(result.items.some(item => item.path === path), path);
+    assert.ok(result.bytes <= result.budgetBytes);
+    const roomy = await retrieveContext(new ProposalStore(root),
+      "Add a LAYOUT option to preview configuration values. Document it and add a test.", {budgetBytes:30000});
+    for (const path of paths.slice(0,3)) assert.equal(roomy.items.find(item => item.path === path)?.text, lines);
+    assert.equal(roomy.bytes, Buffer.byteLength(roomy.text));
+    assert.ok(roomy.bytes <= roomy.budgetBytes);
+  } finally { await rm(root, {recursive:true, force:true}); }
+});

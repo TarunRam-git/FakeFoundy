@@ -3,13 +3,28 @@ type TrueForgeClient = InstanceType<
     with: { "resolution-mode": "import" }
   }).TrueForge
 >;
+function isEditorReview(call: {
+  toolInfo: {type: string; name: string; serverName?: string};
+  function: {arguments: string};
+}): boolean {
+  const info = call.toolInfo;
+  if (info.type === "mcp")
+    return info.serverName === "fakefoundy-editor" && info.name === "review_staged_edits";
+  if (info.type !== "truefoundry-system" || info.name !== "call_tool") return false;
+  try {
+    const args = JSON.parse(call.function.arguments);
+    return args?.mcp_server === "fakefoundy-editor" && args.tool_name === "review_staged_edits"
+      && args.input !== null && typeof args.input === "object" && !Array.isArray(args.input)
+      && Object.keys(args.input).length === 0;
+  } catch { return false; }
+}
 export const instructions = [
   "You are FakeFoundy, a workspace coding assistant. Use only the editor MCP tools for workspace work, never call model providers directly.",
-  "Plan briefly, discover likely files once, then search only unresolved symbols or anchors. Use the supplied workspace context first. Read relevant ranges with fakefoundy_read_file, the authoritative editor reader, not generic read_file or cat. Follow pagination only when needed; cache unchanged excerpts and do not reread or repeat searches already answered.",
-  "After locating the affected implementation, tests and documentation, stage the smallest justified patches promptly. Do not explore unrelated files or keep searching after enough evidence exists. After eight read/search calls, assess what is missing: either stage the supported changes or name the precise blocker before making further targeted reads. Never claim completion when edits are missing.",
+  "Use the supplied workspace context first. For a multi-file request, identify likely implementation, test and guide paths from that context and use any marked complete files directly as original source for propose_patch. Do not spend turns rereading them. For excerpts missing a needed anchor, call read_related_files with those paths in one request. If a target is missing or too large, search for the specific unresolved symbol and read its range. Do not page through a file looking for an anchor.",
+  "Stage each supported part as soon as you have a unique anchor. Do not postpone one file while researching a different file. Issue independent tool calls together when possible. Follow the repository's existing registration and test patterns. Consider the actual data types, fixtures and command entry point. Complete all requested files before review.",
   "Use propose_patch for bounded, disjoint changes against ORIGINAL disk text; same-file patches compose. Read tools still show original content, not staged replacements. Preserve unrelated code and tests. Full-file propose_edit is disabled. For inline tasks use propose_selection with replacement text only.",
   "Tool JSON text fields are strings: use actual newline characters in old_text/new_text, encoded once for JSON transport. Never double-escape newlines into literal backslash-n characters. Copy a short unique original anchor exactly, including indentation. When a patch errors, follow its specific guidance and correct the argument; do not restart discovery or repeat an unchanged failing call. Stop and explain an unresolved blocker after two corrected failures.",
-  "After staging changes, call review_staged_edits exactly once for the current batch before finishing; the harness pauses for native approval. If denied, do not recreate those edits unless the user asks. All proposals require editor review; never claim pending edits were applied. Summarize staged files and remaining caveats when finished.",
+  "After staging changes, call the directly attached review_staged_edits tool exactly once (never via a generic wrapper) for the current batch before finishing; the harness pauses for native approval. If denied, do not recreate those edits unless the user asks. All proposals require editor review; never claim pending edits were applied. Summarize staged files and remaining caveats when finished.",
 ].join(" ");
 export async function createClient(baseUrl: string) {
   const url = new URL(baseUrl);
@@ -62,8 +77,9 @@ export async function runTurn(
       const session = await client.sessions.create({
         agent: { spec: {
           instructions,
+          config: {generativeUi: {enabled:false}},
           model: { name: models[attempt] },
-          mcpServers: [{ name: "fakefoundy-editor", preload: true, requireApprovalForTools: ["review_staged_edits"] }],
+          mcpServers: [{ name: "fakefoundy-editor", preloadTools: ["read_related_files", "propose_selection", "propose_patch", "review_staged_edits"], disableTools: ["read_file", "propose_edit"], requireApprovalForTools: ["review_staged_edits"] }],
         } },
       }, requestOptions);
       sessionId = session.data.id;
@@ -80,8 +96,7 @@ export async function runTurn(
         onEvent(event);
         if (event.type === "turn.created") turnId = event.turnId;
         if (event.type === "model.message") for (const call of event.toolCalls ?? []) {
-          const info = call.toolInfo;
-          if (info.type === "mcp" && info.serverName === "fakefoundy-editor" && info.name === "review_staged_edits")
+          if (isEditorReview(call))
             reviewCalls.add(`${event.threadId}:${event.id}:${call.id}`);
         }
         if (event.type === "tool.approval_required") {
@@ -99,8 +114,8 @@ export async function runTurn(
                 const source = events.data.find(e => e.id === call.sourceEventId);
                 if (source) {
                   if (source.type === "model.message" && source.threadId === event.threadId) {
-                    const tool = source.toolCalls?.find(t => t.id === call.id)?.toolInfo;
-                    if (tool?.type === "mcp" && tool.serverName === "fakefoundy-editor" && tool.name === "review_staged_edits")
+                    const tool = source.toolCalls?.find(t => t.id === call.id);
+                    if (tool && isEditorReview(tool))
                       reviewCalls.add(key);
                   }
                   break;
