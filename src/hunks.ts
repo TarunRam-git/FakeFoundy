@@ -1,3 +1,5 @@
+import { diffArrays } from "diff";
+
 export interface Hunk {
   id: number;
   start: number;
@@ -6,34 +8,42 @@ export interface Hunk {
   after: string;
 }
 const lines = (text: string): string[] => text.match(/[^\n]*\n|[^\n]+$/g) ?? [];
-/** Bounded line LCS. Large edits safely fall back to a single reviewable hunk. */
+/** Diff by lines while keeping original line endings and missing final newlines. */
 export function diffHunks(before: string, after: string): Hunk[] {
   if (before === after) return [];
   const a = lines(before), b = lines(after);
-  let prefix = 0, suffix = 0;
-  while (prefix < a.length && prefix < b.length && a[prefix] === b[prefix]) prefix++;
-  while (suffix < a.length-prefix && suffix < b.length-prefix && a[a.length-1-suffix] === b[b.length-1-suffix]) suffix++;
-  const x = a.slice(prefix, a.length-suffix), y = b.slice(prefix, b.length-suffix);
-  if ((x.length+1)*(y.length+1) > 1_000_000) return [{id:0,start:prefix,deleteCount:x.length,before:x.join(''),after:y.join('')}];
-  const width = y.length+1;
-  const table = new Uint32Array((x.length+1)*width);
-  for (let i=x.length-1;i>=0;i--) for(let j=y.length-1;j>=0;j--)
-    table[i*width+j] = x[i] === y[j] ? 1+table[(i+1)*width+j+1] : Math.max(table[(i+1)*width+j],table[i*width+j+1]);
+  const changes = diffArrays(a, b, {maxEditLength: 2048});
+  // shortcut: extremely large rewrites use one hunk; move diffs off-thread if large rewrites are supported.
+  if (!changes) return [{id:0,start:0,deleteCount:a.length,before,after}];
   const result: Hunk[] = [];
-  let i=0,j=0,current: Hunk|undefined;
-  const finish=()=>{if(current) result.push(current);current=undefined;};
-  while(i<x.length || j<y.length) {
-    if(i<x.length && j<y.length && x[i]===y[j]) {finish();i++;j++;continue;}
-    current ??= {id:result.length,start:prefix+i,deleteCount:0,before:'',after:''};
-    if(j<y.length && (i===x.length || table[i*width+j+1]>=table[(i+1)*width+j])) current.after+=y[j++];
-    else {current.before+=x[i++];current.deleteCount++;}
+  let line = 0;
+  let current: Hunk | undefined;
+  for (const change of changes) {
+    if (change.added || change.removed) {
+      if (!current) {
+        current = {id:result.length,start:line,deleteCount:0,before:"",after:""};
+        result.push(current);
+      }
+      if (change.added) current.after += change.value.join("");
+      else {
+        current.deleteCount += change.count;
+        current.before += change.value.join("");
+      }
+    } else current = undefined;
+    if (!change.added) line += change.count;
   }
-  finish();return result;
+  return result;
 }
 export function applyHunks(before: string, hunks: Hunk[], accepted: readonly number[]): string {
   const selected = new Set(accepted);
   if (accepted.some(id=>!hunks.some(h=>h.id===id))) throw new Error('Unknown hunk');
-  const result=lines(before);
-  for(const h of [...hunks].reverse()) if(selected.has(h.id)) result.splice(h.start,h.deleteCount,...lines(h.after));
-  return result.join('');
+  const original = lines(before);
+  const result: string[] = [];
+  let line = 0;
+  for (const hunk of hunks) {
+    if (!selected.has(hunk.id)) continue;
+    result.push(original.slice(line, hunk.start).join(""), hunk.after);
+    line = hunk.start + hunk.deleteCount;
+  }
+  return result.join("") + original.slice(line).join("");
 }

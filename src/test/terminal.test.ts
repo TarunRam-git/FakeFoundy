@@ -1,6 +1,6 @@
 import {test} from "node:test";
 import assert from "node:assert/strict";
-import {mkdtemp,writeFile,readFile,symlink,rm} from "node:fs/promises";
+import {mkdtemp,writeFile,readFile,symlink,rm,realpath} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {ProposalStore} from "../proposals.js";
@@ -39,7 +39,7 @@ test("approved terminal recipes confine paths, block secrets and bound output wi
     await writeFile(join(outside,"secret"),"private");
     await symlink(join(outside,"secret"),join(root,"outside.txt"));
     await symlink(join(root,".env"),join(root,"alias.txt"));
-    assert.equal((await runReadOnlyTerminal(store,{command:"pwd",args:[]},approve)).stdout,root+"\n");
+    assert.equal((await runReadOnlyTerminal(store,{command:"pwd",args:[]},approve)).stdout,(await realpath(root))+"\n");
     assert.equal((await runReadOnlyTerminal(store,{command:"ls",args:[]},approve)).stdout,"hello.txt\n");
     assert.equal((await runReadOnlyTerminal(store,{command:"cat",args:["hello.txt"]},approve)).stdout,"before\n");
     for(const path of [".env","outside.txt","alias.txt"])

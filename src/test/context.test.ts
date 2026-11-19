@@ -52,3 +52,15 @@ test("the initial budget includes matching code, tests and docs across distracti
     assert.ok(roomy.bytes <= roomy.budgetBytes);
   } finally { await rm(root, {recursive:true, force:true}); }
 });
+
+test('filename ranking retrieves a relevant file beyond the discovery output cap', async()=>{
+  const root=await mkdtemp(join(tmpdir(),'ff-ranking-cap-'));
+  try {
+    for(let i=0;i<510;i++) await writeFile(join(root,`a${i}.txt`),'irrelevant content');
+    await writeFile(join(root,'z_widget.py'),'def widget():\n    return 42\n');
+    const result=await retrieveContext(new ProposalStore(root),'Change widget');
+    assert.equal(result.scannedFiles,500);
+    assert.equal(result.items[0].path,'z_widget.py');
+    assert.equal(result.truncated,true);
+  } finally { await rm(root,{recursive:true,force:true}); }
+});

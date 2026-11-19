@@ -18,7 +18,15 @@ export async function retrieveContext(store: ProposalStore, prompt: string, opti
   const {files, symbols} = parseReferences(prompt);
   const terms = [...new Set((prompt.toLowerCase().match(/[a-z_][a-z_0-9]{2,}/g) ?? []).filter(t=>!stop.has(t) && t!=="file" && t!=="symbol"))].slice(0,40);
   const acronyms = new Set((prompt.match(/\b[A-Z]{2,}\b/g) ?? []).map(word => word.toLowerCase()));
-  const discovered = await store.discover("",500);
+  // Rank filenames before the content scan cap so large test or vendor trees cannot consume it first.
+  const nameMatches = (path: string) => {
+    const basename = path.split("/").pop()!.replace(/\.[^.]+$/, "").toLowerCase();
+    const words = basename.split(/[^a-z0-9]+/);
+    return terms.filter(term => (term === basename || words.includes(term)) && term !== "test" && term !== "tests");
+  };
+  const nameScore = (matches: string[]) => matches.reduce((sum, term) => sum + (acronyms.has(term) ? 20 : 12), 0);
+  options.signal?.throwIfAborted();
+  const discovered = await store.discover("",500,{signal:options.signal, prioritize:path => nameScore(nameMatches(path))});
   const candidates = [...new Set([...files, ...discovered.files])];
   const ranked: {path:string; lines:string[]; line:number; score:number; reason:string}[] = [];
   const warnings: string[] = [];
@@ -40,17 +48,15 @@ export async function retrieveContext(store: ProposalStore, prompt: string, opti
     for (const symbol of hits) foundSymbols.add(symbol);
     // Direct filename matches carry more information than a shared package name
     // or a substring such as "cli" inside "client".
-    const basename = path.split("/").pop()!.replace(/\.[^.]+$/, "").toLowerCase();
-    const nameWords = basename.split(/[^a-z0-9]+/);
-    const pathTerms = terms.filter(term => nameWords.includes(term) && !["test", "tests"].includes(term));
+    const pathTerms = nameMatches(path);
     let bestLine = 0, bestScore = 0;
     for (let i=0;i<lines.length;i++) {
-      const score = terms.filter(t=>lines[i].toLowerCase().includes(t)).length;
+      const normalized = lines[i].toLowerCase();
+      const score = terms.filter(t=>normalized.includes(t)).length;
       if (score>bestScore) { bestScore = score; bestLine=i; }
     }
     if (hits.length) bestLine = lines.findIndex(l=>l.includes(hits[0]));
-    const nameScore = pathTerms.reduce((total, term) => total + (acronyms.has(term) ? 20 : 12), 0);
-    const score = (explicit?10000:0) + hits.length*1000 + nameScore + bestScore;
+    const score = (explicit?10000:0) + hits.length*1000 + nameScore(pathTerms) + bestScore;
     if (!score) continue;
     const reason = explicit ? "explicit @file reference" : hits.length ? `@symbol match: ${hits.join(", ")}` : `lexical relevance: ${[...pathTerms,...terms.filter(t=>lines[bestLine].toLowerCase().includes(t))].filter((x,i,a)=>a.indexOf(x)===i).slice(0,8).join(", ")}`;
     ranked.push({path,lines,line:bestLine,score,reason});

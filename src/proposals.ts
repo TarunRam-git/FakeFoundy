@@ -1,4 +1,4 @@
-import { realpath, readFile, writeFile, stat, readdir } from "node:fs/promises";
+import { realpath, readFile, stat, readdir } from "node:fs/promises";
 import { resolve, relative, isAbsolute } from "node:path";
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
@@ -11,6 +11,11 @@ export interface Proposal {
   before: string;
   after: string;
 }
+export interface InlineScope {
+  path: string;
+  oldText: string;
+  selection?: {start: number; document: string};
+}
 /** No agent-facing tool can apply a proposal. Only the editor's explicit review can. */
 export class ProposalStore {
   private items = new Map<string, Proposal>();
@@ -19,13 +24,12 @@ export class ProposalStore {
   private patchQueues = new Map<string, Promise<void>>();
   private generation = 0;
   private active = true;
-  private inlineScope?: {path:string; oldText:string};
-  setInlineScope(scope?: {path:string; oldText:string}) {
-    this.inlineScope = scope ? {...scope} : undefined;
+  private inlineScope?: InlineScope;
+  setInlineScope(scope?: InlineScope) {
+    this.inlineScope = scope ? {...scope, selection: scope.selection && {...scope.selection}} : undefined;
   }
   beginRun() { this.generation++; this.active = true; }
   endRun() { this.generation++; this.active = false; }
-  invalidatePending() { this.endRun(); }
   constructor(readonly root: string) {}
   async safePath(path: string): Promise<string> {
     const sensitive = (p: string) =>
@@ -90,6 +94,7 @@ export class ProposalStore {
       has_more:hasMore,next:hasMore?{start_line:line+1,start_column:column}:null};
   }
   private async stage(path: string, before: string, content: string, generation: number, exclusive = false, replace?: Proposal): Promise<Proposal> {
+    if (before === content) throw new Error("Proposed edit would make no changes");
     if (Buffer.byteLength(content) > 1024 * 1024) throw new Error("Proposal exceeds 1 MiB");
     const p = {id:replace?.id ?? randomUUID(), path:await this.safePath(path), before,
       hunks:diffHunks(before,content), after:content};
@@ -115,7 +120,7 @@ export class ProposalStore {
     return this.proposePatch(scope.path,scope.oldText,newText);
   }
   /** Exact replacement, never interprets new_text as an entire file. No disk writes. */
-  async proposePatch(path: string, oldText: string, newText: string): Promise<Proposal> {
+  async proposePatch(path: string, oldText: string, newText: string, replaceExisting = false): Promise<Proposal> {
     const generation=this.generation;
     const scope=this.inlineScope;
     if (!this.active) throw new Error("No active agent run");
@@ -141,21 +146,55 @@ export class ProposalStore {
         throw new Error("Pending patch belongs to an earlier run; review or reject it before starting another run");
       const before=await this.read(target);
       if (existing && existing.before!==before) throw new Error("File changed since proposal; regenerate it");
-      const index=before.indexOf(oldText);
-      if (index<0) {
+      const edits = existing ? this.patchEdits.get(existing.id)! : [];
+      const anchors = replaceExisting ? edits.filter(edit => edit.end - edit.start <= 1000)
+        .slice(0, 3).map(edit => before.slice(edit.start, edit.end)) : [];
+      const revisionHint = anchors.length ? ` Valid original old_text values for staged revisions: ${JSON.stringify(anchors)}.` : "";
+      const selection = scope?.selection;
+      if (selection && (before !== selection.document || before.slice(selection.start, selection.start + oldText.length) !== oldText))
+        throw new Error("File changed since the inline selection was captured; select the code again");
+      const originalIndex = selection?.start ?? before.indexOf(oldText);
+      const exact = replaceExisting ? edits.find(edit => edit.start === originalIndex && edit.end === originalIndex + oldText.length) : undefined;
+      const matches = !exact && (replaceExisting || originalIndex < 0)
+        ? edits.filter(edit => edit.text.includes(oldText)) : [];
+      const staged = matches[0];
+      const stagedIndex = staged?.text.indexOf(oldText) ?? -1;
+      const revision = matches.length === 1 && staged.text.indexOf(oldText, stagedIndex + 1) < 0 ? staged : undefined;
+      if (revision && !replaceExisting) {
+        throw new Error("old_text matches the current staged replacement exactly. Resend the same patch with replace_existing: true.");
+      }
+      if (originalIndex < 0 && !revision) {
+        if (revisionHint) throw new Error(`old_text does not match the original disk text. Nothing was staged.${revisionHint}`);
         if (oldText.includes("\\n")) {
           const decoded=oldText.replace(/\\r\\n/g,"\r\n").replace(/\\n/g,"\n");
           if (before.includes(decoded))
             throw new Error("old_text contains literal backslash-n sequences instead of actual newline characters. Send the same text with real newlines in the parsed string; JSON-encode once, not twice. Nothing was staged. Do not reread or search: correct this argument and retry once.");
         }
+        const hint = oldText.split(/\r?\n/).find(line => {
+          if (line.trim().length < 8 || line.length > 200) return false;
+          const at = before.indexOf(line);
+          return at >= 0 && (at === 0 || before[at - 1] === "\n")
+            && /^(?:\r?\n|$)/.test(before.slice(at + line.length, at + line.length + 2))
+            && before.indexOf(line, at + 1) < 0;
+        });
+        if (hint) {
+          const line = before.slice(0, before.indexOf(hint)).split("\n").length;
+          throw new Error(`old_text does not match original disk text. Nothing was staged. Original line ${line} matches exactly: ${JSON.stringify(hint)}. For an insertion, use just this line as old_text and preserve it in new_text. For a replacement, read the exact range around line ${line}.`);
+        }
         throw new Error("old_text does not match original disk text. Nothing was staged. Read only the target line range with fakefoundy_read_file, copy a short unique anchor exactly, then correct the patch; do not restart repository discovery.");
       }
-      if (before.indexOf(oldText,index+1)>=0) throw new Error("old_text is not unique; include more context");
-      const edits=existing ? this.patchEdits.get(existing.id)! : [];
-      const end=index+oldText.length;
-      if (edits.some(edit=>index<edit.end && end>edit.start))
-        throw new Error("Conflicting patch overlaps a previously staged original range");
-      const combined=[...edits,{start:index,end,text:newText}].sort((a,b)=>b.start-a.start);
+      if (!selection && !revision && before.indexOf(oldText,originalIndex+1)>=0) throw new Error("old_text is not unique; include more context");
+      const replaced = exact ?? revision;
+      if (replaceExisting && !replaced)
+        throw new Error(`No staged patch has that exact original range or a unique staged match. Omit replace_existing for a new disjoint patch.${revisionHint}`);
+      const index = replaced?.start ?? originalIndex;
+      const end = replaced?.end ?? originalIndex + oldText.length;
+      const text = revision ? revision.text.replace(oldText, () => newText) : newText;
+      if (Buffer.byteLength(text) > 24000) throw new Error("Revised patch range exceeds 24 KB");
+      const retained = edits.filter(edit => edit !== replaced);
+      if (retained.some(edit=>index<edit.end && end>edit.start))
+        throw new Error("Conflicting patch overlaps a previously staged original range. To revise it, set replace_existing: true with its exact original range or a unique snippet from its staged replacement.");
+      const combined=[...retained,{start:index,end,text}].sort((a,b)=>b.start-a.start);
       let after=before;
       for (const edit of combined) after=after.slice(0,edit.start)+edit.text+after.slice(edit.end);
       const p=await this.stage(target,before,after,generation,true,existing);
@@ -169,31 +208,62 @@ export class ProposalStore {
   }
 
   /** Bounded discovery: never follows symlink directories or exposes hidden/generated trees. */
-  async discover(query = "", limit = 100) {
+  async discover(query = "", limit = 100, options: {signal?: AbortSignal; prioritize?: (path: string) => number} = {}) {
     const files: string[] = [];
     // Git supplies ignore semantics without executing project code or a shell.
     let allowed: Set<string> | undefined;
     try {
-      const {stdout} = await promisify(execFile)("git", ["-C", this.root, "ls-files", "--cached", "--others", "--exclude-standard", "-z"], {timeout:2000,maxBuffer:2*1024*1024});
+      const {stdout} = await promisify(execFile)("git", ["-C", this.root, "ls-files", "--cached", "--others", "--exclude-standard", "-z"], {timeout:2000,maxBuffer:8*1024*1024,signal:options.signal});
       allowed = new Set(stdout.split("\0").filter(Boolean));
-    } catch { /* Non-Git folders retain the conservative built-in exclusions. */ }
+    } catch {
+      options.signal?.throwIfAborted();
+      // An incomplete Git inventory cannot enforce ignore rules.
+      if (await promisify(execFile)("git", ["-C", this.root, "rev-parse", "--is-inside-work-tree"],
+        {timeout:2000,signal:options.signal}).then(() => true, () => false)) return {files, truncated:true};
+    }
 
     const pending = [""];
     let scanned = 0;
     const cap = Math.max(1, Math.min(limit, 500));
+    const candidates: string[] = [];
+    const prioritize = options.prioritize;
     const omitted = new Set(["node_modules", "dist", "build", "coverage", "vendor", "__pycache__"]);
-    while (pending.length && files.length < cap && scanned < 5000) {
+    const directories = new Set<string>();
+    for (const path of allowed ?? []) {
+      for (let at = path.lastIndexOf("/"); at > 0; at = path.lastIndexOf("/", at - 1)) {
+        const dir = path.slice(0, at);
+        if (directories.has(dir)) break;
+        directories.add(dir);
+      }
+    }
+    const match = query.toLowerCase();
+    while (pending.length && (prioritize || files.length < cap) && scanned < 5000) {
+      options.signal?.throwIfAborted();
       const dir = pending.pop()!;
       const entries = await readdir(resolve(this.root, dir), {withFileTypes:true});
       entries.sort((a,b)=>a.name.localeCompare(b.name));
       for (const entry of entries) {
-        if (++scanned > 5000 || files.length >= cap) break;
         if (entry.name.startsWith(".") || omitted.has(entry.name) || entry.isSymbolicLink()) continue;
         const path = dir ? `${dir}/${entry.name}` : entry.name;
+        if (entry.isDirectory() && allowed && !directories.has(path)) continue;
+        if (entry.isFile() && allowed && !allowed.has(path)) continue;
+        if (++scanned > 5000 || (!prioritize && files.length >= cap)) break;
         if (entry.isDirectory()) pending.push(path);
-        else if (entry.isFile() && (!allowed || allowed.has(path)) && path.toLowerCase().includes(query.toLowerCase())) {
-          try { await this.safePath(path); files.push(path); } catch { /* protected file */ }
+        else if (entry.isFile() && path.toLowerCase().includes(match)) {
+          if (prioritize) candidates.push(path);
+          else {
+            try { await this.safePath(path); files.push(path); } catch { /* protected file */ }
+          }
         }
+      }
+    }
+    if (prioritize) {
+      const ranked = candidates.map(path => ({path, score: prioritize(path)}));
+      ranked.sort((a,b) => b.score - a.score);
+      for (const {path} of ranked) {
+        options.signal?.throwIfAborted();
+        if (files.length >= cap) break;
+        try { await this.safePath(path); files.push(path); } catch { /* protected file */ }
       }
     }
     return {files, truncated: pending.length > 0 || files.length >= cap || scanned >= 5000};
@@ -233,12 +303,5 @@ export class ProposalStore {
     this.patchEdits.delete(id);
     this.patchGenerations.delete(id);
     this.items.delete(id);
-  }
-  async apply(id: string) {
-    const p = this.get(id);
-    if ((await this.read(p.path)) !== p.before)
-      throw new Error("File changed since proposal; regenerate it");
-    await writeFile(p.path, p.after);
-    this.reject(id);
   }
 }

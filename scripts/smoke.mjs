@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict';
 // Tests the real TrueForge runtime with a deterministic LOCAL fake model.
 // This proves transport/tool wiring, not real-model task-solving ability.
 import { createServer } from "node:http";
@@ -19,10 +20,10 @@ const model = createServer(async (req, res) => {
   const body = JSON.parse(raw);
   calls++;
   const tools = body.tools ?? [];
-  const desired = calls === 1 ? "fakefoundy_read_file" : "propose_patch";
+  const desired = ["read_related_files","propose_patch","review_staged_edits"][calls - 1];
   const tool = tools.find((t) => t.function?.name?.endsWith(desired));
   const delta =
-    calls <= 2 && tool
+    calls <= 3 && tool
       ? {
           role: "assistant",
           tool_calls: [
@@ -34,8 +35,8 @@ const model = createServer(async (req, res) => {
                 name: tool.function.name,
                 arguments: JSON.stringify(
                   calls === 1
-                    ? { path: "hello.txt" }
-                    : { path: "hello.txt", old_text: "before", new_text: "after" },
+                    ? { files: [{path: "hello.txt"}] }
+                    : calls === 2 ? {path: "hello.txt", old_text: "before", new_text: "after"} : {},
                 ),
               },
             },
@@ -45,7 +46,7 @@ const model = createServer(async (req, res) => {
   res.writeHead(200, { "Content-Type": "text/event-stream" });
   for (const [d, reason] of [
     [delta, null],
-    [{}, calls <= 2 && tool ? "tool_calls" : "stop"],
+    [{}, calls <= 3 && tool ? "tool_calls" : "stop"],
   ])
     res.write(
       `data: ${JSON.stringify({ id: "local-test", object: "chat.completion.chunk", created: 1, model: "test", choices: [{ index: 0, delta: d, finish_reason: reason }] })}\n\n`,
@@ -79,6 +80,7 @@ try {
       },
     },
   });
+  let approved = false;
   let events = 0;
   const types = new Set();
   const session = await runTurn(
@@ -89,7 +91,16 @@ try {
       events++;
       types.add(e.type);
     },
+    {onApproval: async () => {
+      assert.equal(store.list()[0]?.after, "after");
+      assert.equal(await readFile(join(root, "hello.txt"), "utf8"), "before");
+      approved = true;
+      return true;
+    }, hasUnreviewedEdits: () => store.list().length > 0 && !approved},
   );
+  assert.ok(approved);
+  assert.ok(types.has("model.message.delta"));
+  assert.equal(calls, 4);
   if (
     store.list().length !== 1 ||
     (await readFile(join(root, "hello.txt"), "utf8")) !== "before"

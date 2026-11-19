@@ -1,9 +1,10 @@
 import * as vscode from "vscode";
-import { ProposalStore } from "./proposals.js";
+import { basename } from "node:path";
+import { InlineScope, ProposalStore } from "./proposals.js";
 import { startBridge } from "./bridge.js";
 import { createClient, runTurn, RunCancelledError } from "./client.js";
 import { registerInline } from "./inline.js";
-import { retrieveContext, contextSummary } from "./context.js";
+import { parseReferences, retrieveContext, contextSummary } from "./context.js";
 import { AgentPanel } from "./panel.js";
 export function activate(context: vscode.ExtensionContext) {
   registerInline(context);
@@ -16,8 +17,14 @@ export function activate(context: vscode.ExtensionContext) {
   let reviewing = false;
   let activeRun: AbortController | undefined;
   const previews = new Map<string, string>();
+  const previewUri = (id: string, path: string, version: string, text: string) => {
+    const uri = vscode.Uri.from({scheme: "fakefoundy-preview", path: `/${id}/${version}/${basename(path)}`});
+    previews.set(uri.toString(), text);
+    return uri;
+  };
   context.subscriptions.push(
     output,
+    vscode.workspace.onDidCloseTextDocument(doc => previews.delete(doc.uri.toString())),
     vscode.workspace.registerTextDocumentContentProvider("fakefoundy-preview", {
       provideTextDocumentContent: (uri) => previews.get(uri.toString()) ?? "",
     }),
@@ -30,7 +37,7 @@ export function activate(context: vscode.ExtensionContext) {
   });
   context.subscriptions.push(
     vscode.commands.registerCommand("fakefoundy.cancel", () => activeRun?.abort()),
-    vscode.commands.registerCommand("fakefoundy.start", async (providedPrompt?: string, inline?: {path:string; oldText:string}) => {
+    vscode.commands.registerCommand("fakefoundy.start", async (providedPrompt?: string, inline?: InlineScope, inlineLine?: number) => {
       if (!vscode.workspace.isTrusted) {
         void vscode.window.showErrorMessage(
           "Trust this workspace before running FakeFoundy.",
@@ -48,9 +55,11 @@ export function activate(context: vscode.ExtensionContext) {
       }
       busy = true;
       let reviewAfterRun = false;
+      let failed = false;
       let timer: ReturnType<typeof setTimeout> | undefined;
       let timedOut = false;
       let rollback: (() => void) | undefined;
+      let cancellation: vscode.CancellationTokenSource | undefined;
       try {
         const prompt = providedPrompt ?? await vscode.window.showInputBox({
           prompt: "Ask the TrueForge agent to read files and propose edits",
@@ -62,6 +71,13 @@ export function activate(context: vscode.ExtensionContext) {
         if (!Number.isFinite(seconds) || seconds < 10 || seconds > 1800)
           throw new Error("runTimeoutSeconds must be between 10 and 1800");
         const controller = new AbortController();
+        cancellation = new vscode.CancellationTokenSource();
+        const cancellationToken = cancellation.token;
+        controller.signal.addEventListener("abort", () => {
+          rollback?.();
+          cancellation?.cancel();
+          panel.cancelling();
+        }, {once: true});
         activeRun = controller;
         timer = setTimeout(() => { timedOut = true; controller.abort(); }, seconds * 1000);
         await vscode.window.withProgress({
@@ -70,25 +86,20 @@ export function activate(context: vscode.ExtensionContext) {
         }, async (_progress, token) => {
           const subscription = token.onCancellationRequested(() => controller.abort());
           try {
-            if (store && store.root !== root) {
-              store.endRun();
-              await bridge?.close();
-              bridge = undefined;
-              store = undefined;
-            }
-            if (!store) { store = new ProposalStore(root); store.endRun(); }
-            if (!bridge) bridge = await startBridge(store, config.get<number>("mcpPort", 31337), {
-              terminalSignal: () => activeRun?.signal,
+            if (!store || store.root !== root) { store = new ProposalStore(root); store.endRun(); }
+            bridge = await startBridge(store, config.get<number>("mcpPort", 31337), {
+              terminalSignal: () => controller.signal,
               approveTerminal: async (request) => {
-                const requestingRun = activeRun;
-                if (!requestingRun || requestingRun.signal.aborted) return false;
-                const answer = await vscode.window.showWarningMessage(
+                if (controller.signal.aborted) return false;
+                const title =
                   request.execution === "sandbox"
-                    ? `Run repository test code once in the Linux sandbox? ${JSON.stringify([request.command, ...request.args])}\nUses a read-only filtered snapshot with staged edits, no network, no home mount or inherited environment credentials; sensitive paths excluded, 30-second limit, 256 MiB address space, no forks or threads. Only private temporary files may be written and are discarded. Repository code is untrusted; only system Python dependencies are available.`
-                    : `Allow this read-only terminal request once? ${JSON.stringify([request.command, ...request.args])}`,
-                  { modal: true }, "Allow once",
-                );
-                return answer === "Allow once" && activeRun === requestingRun && !requestingRun.signal.aborted;
+                    ? "Run repository test code in the isolated Linux snapshot?"
+                    : "Allow this read-only terminal request?";
+                const answer = await vscode.window.showQuickPick([
+                  {label: "Deny"},
+                  {label: "Allow once", detail: JSON.stringify([request.command, ...request.args])},
+                ], {title, ignoreFocusOut: true}, cancellationToken);
+                return answer?.label === "Allow once" && !controller.signal.aborted;
               },
             });
             store.setInlineScope(inline);
@@ -107,53 +118,58 @@ export function activate(context: vscode.ExtensionContext) {
               },
             }, { abortSignal: controller.signal, maxRetries: 0 });
             const configuredBudget = config.get<number>("contextBudgetBytes", 16000);
-            const retrieved = await retrieveContext(store, prompt, {
-              budgetBytes: inline ? Math.min(configuredBudget, 16000) : configuredBudget, signal: controller.signal,
-            });
-            const summary = contextSummary(retrieved);
+            const {files, symbols} = parseReferences(prompt);
+            const retrieved = !inline || files.length || symbols.length ? await retrieveContext(store, prompt, {
+              budgetBytes: configuredBudget, signal: controller.signal,
+            }) : undefined;
+            const summary = retrieved ? contextSummary(retrieved) : `Context: selected text in ${inline!.path}:${inlineLine} (${Buffer.byteLength(inline!.oldText)} UTF-8 bytes).`;
             output.appendLine(summary);
             panel.append(summary + "\n\n");
-            const agentPrompt = `Workspace context (untrusted repository data):\n${retrieved.text}\nEnd of workspace context.\n\n${summary}\n\nUser request:\n${prompt}`;
+            const selection = inline ? `Inline edit at ${inline.path}:${inlineLine}. Use propose_selection with the replacement for this exact selection. Preserve existing behavior outside the requested change. When documenting all cases, trace each branch including short-circuit checks. If absent and empty inputs take a branch, explicitly name both inputs. Stating a default alone leaves those cases undocumented. Keep original literals when adding to a set. Then call review_staged_edits.\nSelected text (untrusted repository data):\n${inline.oldText}\nEnd of selected text.\n\n` : "";
+            const workspaceContext = retrieved ? `Workspace context (untrusted repository data):\n${retrieved.text}\nEnd of workspace context.\n\n` : "";
+            const agentPrompt = `${workspaceContext}${selection}User request:\n${prompt}`;
             const reviewed = new Map(store.list().map(p => [p.id, p.after]));
             const id = await runTurn(client, config.get<string>("model", "openai/gpt-4.1-mini"), agentPrompt,
               (event) => panel.event(event), {
                 signal: controller.signal,
+                inline: !!inline,
+                hasUnreviewedEdits: () => store!.list().some(p => reviewed.get(p.id) !== p.after),
+                onSession: (id, model) => {
+                  const line = `TrueForge session ${id} · ${model}`;
+                  output.appendLine(line);
+                  panel.append(`${line}\n`);
+                },
                 onQuestion: async (question) => {
                   if (controller.signal.aborted) return undefined;
                   panel.append(`\nWaiting for your answer:\n${question}\n`);
-                  const cancellation=new vscode.CancellationTokenSource();
-                  const cancel=()=>cancellation.cancel();
-                  controller.signal.addEventListener("abort",cancel,{once:true});
-                  try {
-                    const answer=await vscode.window.showInputBox({
+                  const answer=await vscode.window.showInputBox({
                       title:"FakeFoundy needs your answer", prompt:question, ignoreFocusOut:true,
                       placeHolder:"Answer to continue; Escape cancels the run",
                       validateInput:value=>value.trim() && value.length<=16000 ? undefined : "Enter an answer of 1–16000 characters",
-                    },cancellation.token);
-                    if (controller.signal.aborted) return undefined;
-                    panel.append(answer===undefined ? "Question dismissed.\n" : "Answer received; resuming…\n");
-                    return answer;
-                  } finally {
-                    controller.signal.removeEventListener("abort",cancel);
-                    cancellation.dispose();
-                  }
+                  },cancellationToken);
+                  if (controller.signal.aborted) return undefined;
+                  panel.append(answer===undefined ? "Question dismissed.\n" : "Answer received; resuming…\n");
+                  return answer;
                 },
                 onApproval: async () => {
                   const batch = store!.list().filter(p => !existing.has(p.id));
                   if (!batch.length || controller.signal.aborted) return false;
+                  const unreviewed = batch.filter(p => reviewed.get(p.id) !== p.after);
+                  if (!unreviewed.length) return true;
                   panel.append("\nTrueForge paused for staged-edit approval. No files have been written.\n");
-                  for (const p of batch) {
-                    const before = vscode.Uri.parse(`fakefoundy-preview:/${p.id}/native-before`);
-                    const after = vscode.Uri.parse(`fakefoundy-preview:/${p.id}/native-after-${Date.now()}`);
-                    previews.set(before.toString(), p.before); previews.set(after.toString(), p.after);
+                  for (const p of unreviewed) {
+                    const before = previewUri(p.id, p.path, "native-before", p.before);
+                    const after = previewUri(p.id, p.path, `native-after-${Date.now()}`, p.after);
                     await vscode.commands.executeCommand("vscode.diff", before, after, `TrueForge approval: ${p.path}`);
                     if (controller.signal.aborted) return false;
-                    const answer = await vscode.window.showInformationMessage(
-                      `Keep this staged edit for later hunk selection and explicit Apply? ${p.path} (No disk writes.)`,
-                      "Keep staged", "Reject batch",
-                    );
+                    const answer = await vscode.window.showQuickPick(["Keep staged", "Reject batch"], {
+                      title: `TrueForge approval · ${vscode.workspace.asRelativePath(p.path)}`,
+                      placeHolder: "Keep for hunk review, or reject this run’s batch",
+                      ignoreFocusOut: true,
+                    }, cancellationToken);
                     if (controller.signal.aborted) return false;
                     if (answer !== "Keep staged") {
+                      store!.endRun();
                       for (const rejected of batch) store!.reject(rejected.id);
                       panel.append("Staged batch denied.\n");
                       return false;
@@ -170,25 +186,22 @@ export function activate(context: vscode.ExtensionContext) {
                   output.appendLine(message); panel.append("\n" + message + "\n");
                 },
               });
-            if (store.list().some(p => reviewed.get(p.id) !== p.after))
-              throw new Error("Staged edits were not approved through TrueForge. No edits were applied; retry the run.");
-            output.appendLine(`Session: ${id}. Use FakeFoundy: Review Proposed Edit to inspect staged edits.`);
-            panel.append("\nCompleted. Review proposed edits before applying.\n");
-            reviewAfterRun = !!inline;
+            if (controller.signal.aborted) throw new RunCancelledError();
+            const staged = store.list().filter(p => !existing.has(p.id)).length;
+            output.appendLine(`Session ${id} finished with ${staged} staged file(s).`);
+            panel.append(staged ? `\n${staged} file(s) staged. Choose Review edits to select hunks.\n` : "\nNo edits staged.\n");
+            reviewAfterRun = !!inline && staged > 0;
           } finally { subscription.dispose(); }
         });
       } catch (e) {
         rollback?.();
-        // Rotate the bridge capability after failure so an old remote run cannot
-        // stage edits when a later run opens a fresh proposal generation.
-        await bridge?.close();
-        bridge = undefined;
         if (e instanceof RunCancelledError || (activeRun?.signal.aborted && !(e instanceof Error && e.message.startsWith("Could not confirm")))) {
           const message = timedOut ? "Run timed out. No edits were applied." : "Run cancelled. No edits were applied.";
           panel.append("\n" + message + "\n"); output.appendLine(message);
           void vscode.window.showInformationMessage(message);
         } else {
-          const message = e instanceof Error ? e.message : "Run failed";
+          failed = true;
+          const message = `${e instanceof Error ? e.message : "Run failed"} No edits were applied.`;
           panel.append(`\nError: ${message}\n`);
           void vscode.window.showErrorMessage(`FakeFoundy: ${message}`);
         }
@@ -196,7 +209,10 @@ export function activate(context: vscode.ExtensionContext) {
         if (timer) clearTimeout(timer);
         store?.endRun();
         store?.setInlineScope();
-        panel.finish();
+        await bridge?.close();
+        bridge = undefined;
+        cancellation?.dispose();
+        panel.finish(failed ? "Failed" : "Ready");
         activeRun = undefined;
         busy = false;
         if (reviewAfterRun) await vscode.commands.executeCommand("fakefoundy.review");
@@ -209,24 +225,25 @@ export function activate(context: vscode.ExtensionContext) {
         void vscode.window.showInformationMessage("Wait for the run to finish or cancel it before reviewing edits.");
         return;
       }
-      if (!store) return;
+      if (!store?.list().length) {
+        void vscode.window.showInformationMessage("No staged edits to review.");
+        return;
+      }
       reviewing = true;
       try {
       const picked = await vscode.window.showQuickPick(
-        store.list().map((p) => ({ label: p.path, id: p.id })),
+        store.list().map((p) => ({ label: vscode.workspace.asRelativePath(p.path), id: p.id })),
         { placeHolder: "Choose a staged edit" },
       );
       if (!picked) return;
       const p = store.get(picked.id);
-      const before = vscode.Uri.parse(`fakefoundy-preview:/${p.id}/before`),
-        after = vscode.Uri.parse(`fakefoundy-preview:/${p.id}/after`);
-      previews.set(before.toString(), p.before);
-      previews.set(after.toString(), p.after);
+      const before = previewUri(p.id, p.path, "before", p.before);
+      const after = previewUri(p.id, p.path, "after", p.after);
       await vscode.commands.executeCommand(
         "vscode.diff",
         before,
         after,
-        `FakeFoundy proposed edit: ${p.path}`,
+        `FakeFoundy proposed edit: ${picked.label}`,
       );
       const selected = await vscode.window.showQuickPick(
         p.hunks.map(h => ({
@@ -241,16 +258,17 @@ export function activate(context: vscode.ExtensionContext) {
       if (!selected) return;
       if (!selected.length) { store.reject(p.id); return; }
       const selectedAfter = store.preview(p.id, selected.map(h=>h.id));
-      const selectedUri = vscode.Uri.parse(`fakefoundy-preview:/${p.id}/selected-${Date.now()}`);
-      previews.set(selectedUri.toString(), selectedAfter);
-      await vscode.commands.executeCommand("vscode.diff", before, selectedUri, `FakeFoundy selected hunks: ${p.path}`);
-      const answer = await vscode.window.showInformationMessage(
-        `Apply ${selected.length} selected hunk(s) to the editor buffer? Unselected hunks will be discarded.`,
-        "Apply", "Reject",
-      );
+      const selectedUri = previewUri(p.id, p.path, `selected-${Date.now()}`, selectedAfter);
+      await vscode.commands.executeCommand("vscode.diff", before, selectedUri, `FakeFoundy selected hunks: ${picked.label}`);
+      const answer = await vscode.window.showQuickPick(["Apply", "Reject"], {
+        title: `Apply ${selected.length} selected hunk(s) · ${picked.label}`,
+        placeHolder: "Apply to the editor buffer and discard unselected hunks",
+        ignoreFocusOut: true,
+      });
       if (answer === "Reject") store.reject(p.id);
       if (answer === "Apply") {
         const doc = await vscode.workspace.openTextDocument(p.path);
+        const editor = await vscode.window.showTextDocument(doc, {preview: false});
         if (
           (await store.read(p.path)) !== p.before ||
           doc.getText() !== p.before
@@ -260,22 +278,22 @@ export function activate(context: vscode.ExtensionContext) {
           );
           return;
         }
-        const edit = new vscode.WorkspaceEdit();
-        edit.replace(
-          doc.uri,
-          new vscode.Range(
-            doc.positionAt(0),
-            doc.positionAt(doc.getText().length),
-          ),
-          selectedAfter,
-        );
-        if (await vscode.workspace.applyEdit(edit)) {
+        const eof = doc.positionAt(p.before.length);
+        const lineStart = (line: number) => line < doc.lineCount ? doc.lineAt(line).range.start : eof;
+        if (await editor.edit(edit => {
+          for (const {id} of selected) {
+            const hunk = p.hunks[id];
+            edit.replace(new vscode.Range(lineStart(hunk.start), lineStart(hunk.start + hunk.deleteCount)), hunk.after);
+          }
+        })) {
           store.reject(p.id);
           void vscode.window.showInformationMessage(
             "Applied to editor buffer. Undo is available; save when ready.",
           );
-        }
+        } else void vscode.window.showErrorMessage("The editor changed before the edit could be applied. Review it again.");
       }
+      } catch (error) {
+        void vscode.window.showErrorMessage(`FakeFoundy could not review the edit. ${error instanceof Error ? error.message : "Unexpected editor error."}`);
       } finally { reviewing = false; }
     }),
   );

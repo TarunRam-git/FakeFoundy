@@ -7,3 +7,7 @@ dist/
 *.db
 *.db-*
 *.vsix
+
+# Local rehearsal workspaces and verification evidence.
+/.validation/
+/docs/verification.md

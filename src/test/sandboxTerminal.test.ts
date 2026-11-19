@@ -71,7 +71,7 @@ test("sandbox isolation succeeds on a capable host (otherwise explicitly skipped
 });
 
 
-test("snapshot canonicalizes symlink workspace roots and never overwrites original proposals",async()=>{
+test("snapshot canonicalizes symlink workspace roots and never overwrites original proposals",{skip:process.platform!=="linux" && "requires Linux /proc/self/fd"},async()=>{
   const parent=await mkdtemp(join(tmpdir(),"ff-snapshot-escape-"));
   const actual=join(parent,"real"),alias=join(parent,"alias"),snapshot=join(parent,"snapshot");
   try {
@@ -112,7 +112,7 @@ test("snapshot rejects stale staged proposals instead of testing outdated conten
 });
 
 
-test("snapshot preserves bounded binary fixtures exactly, excludes secret and symlink files",async()=>{
+test("snapshot preserves bounded binary fixtures exactly, excludes secret and symlink files",{skip:process.platform!=="linux" && "requires Linux /proc/self/fd"},async()=>{
   const parent=await mkdtemp(join(tmpdir(),"ff-snapshot-binary-"));
   const root=join(parent,"workspace"),snapshot=join(parent,"snapshot");
   try {
@@ -146,7 +146,7 @@ test("snapshot byte reader rejects oversized regular files before copying",async
   }finally{await rm(parent,{recursive:true,force:true});}
 });
 
-test("snapshot rejects a file changed after initial proposal validation",async()=>{
+test("snapshot rejects a file changed after initial proposal validation",{skip:process.platform!=="linux" && "requires Linux /proc/self/fd"},async()=>{
   const parent=await mkdtemp(join(tmpdir(),"ff-snapshot-race-"));
   const root=join(parent,"workspace"),snapshot=join(parent,"snapshot");
   try {

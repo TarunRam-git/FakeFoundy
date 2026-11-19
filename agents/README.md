@@ -26,14 +26,12 @@ context is selected by `src/context.ts` and its budget/reasons shown in the pane
 `requireApprovalForTools` includes `review_staged_edits`. The agent must request
 this after staging its batch. The client handles native approval on the same turn;
 the extension previews proposals and asks to keep staged or reject the batch.
-Successful native approval is not editor Apply: independent hunk selection and
-explicit buffer application happen afterwards. A run that leaves unapproved
-changes fails closed. Live allow/deny/cancel protocol checks passed. The VS Code native-diff and
-Keep staged path also passed, with same-turn approval and unchanged disk.
-That UI result does not verify every rejection/cancellation path.
+Native approval keeps changes staged for independent hunk selection and explicit
+buffer application. If the model ends a turn without requesting review, the
+extension sends one review reminder in the same session. An unapproved batch
+remaining after that reminder is discarded.
 
 Built-in `ask_user_question` requests are handled through verified persisted tool
 identity and same-turn `user.tool_response` events. The editor shows the question
 and choices; Escape or cancellation stops the run. Missing, unsupported or
 malformed question requests fail clearly rather than being silently ignored.
-Real editor answer/continue and Escape cancellation paths have been verified.

@@ -56,6 +56,17 @@ test("client disallows non-local runtime URLs", async () => {
   await assert.rejects(createClient("https://example.com"), /local HTTP/);
 });
 
+test("model endpoint and authentication failures tell users what to fix", async () => {
+  for (const [message, guidance] of [
+    ["[Model Error] Cannot connect to API: connect ECONNREFUSED 127.0.0.1:18791", /could not reach.*test\/model.*Check its endpoint in TrueForge Settings/],
+    ["[Model Error] 401 UNAUTHENTICATED: upstream body", /rejected credentials.*test\/model.*Update the API key in TrueForge Settings/],
+  ] as const) {
+    const client = fakeClient([{type:"turn.done",state:{status:"error",message}}]);
+    await assert.rejects(runTurn(client, "test/model", "prompt", () => {}), (error: Error) =>
+      guidance.test(error.message) && !error.message.includes("upstream body"));
+  }
+});
+
 test("falls back only once, rolls back before retry, and uses configured model", async () => {
   const calls: string[] = [];
   let attempt = 0;
@@ -250,4 +261,28 @@ test("approval identity lookup follows returned SDK pagination pages", async () 
   }} as unknown as Parameters<typeof runTurn>[0];
   await runTurn(client,"model","prompt",()=>{}, {onApproval:async()=>{reviews++;return true;}});
   assert.equal(pages,1); assert.equal(reviews,1); assert.equal(posted[0].events[0].approval.status,"allow");
+});
+
+test("unreviewed patches trigger one automatic review turn on the same session", async () => {
+  const calls: string[] = [];
+  const client = fakeClient([]);
+  let pending = true;
+  let turn = 0;
+  client.sessions.createTurnStream = (async function* (id: string, request: any) {
+    assert.equal(id, "session-test");
+    calls.push(request.input[0].content);
+    if (++turn === 2) pending = false;
+    yield {type: "turn.done", state: {status: "done"}};
+  }) as unknown as typeof client.sessions.createTurnStream;
+  await runTurn(client, "primary", "Original user request", () => {}, {hasUnreviewedEdits: () => pending});
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0], "Original user request");
+  assert.match(calls[1], /review_staged_edits/);
+
+  turn = 0;
+  calls.length = 0;
+  await assert.rejects(runTurn(client, "primary", "Original user request", () => {}, {
+    hasUnreviewedEdits: () => true,
+  }), /not approved/);
+  assert.equal(calls.length, 2);
 });

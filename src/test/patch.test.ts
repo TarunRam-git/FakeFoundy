@@ -104,3 +104,41 @@ test('literal backslash-n remains literal when it is real file content',async()=
   const p=await s.proposePatch('a.py','literal\\ntext','replaced');
   assert.equal(p.after,'value="replaced"\n');
 }));
+
+test('captured inline offset disambiguates duplicate text and rejects stale source',async()=>fixture(async(s,root)=>{
+  const before='same\nkeep\nsame\n';
+  await writeFile(join(root,'a.py'),before);
+  const scope={path:'a.py',oldText:'same',selection:{start:10,document:before}};
+  s.setInlineScope(scope);
+  scope.selection.start=0;
+  const p=await s.proposeSelection('edited');
+  assert.equal(p.after,'same\nkeep\nedited\n');
+  assert.equal(await s.read('a.py'),before);
+  s.reject(p.id);
+  await writeFile(join(root,'a.py'),before.replace('keep','user'));
+  await assert.rejects(s.proposeSelection('rejected'),/changed since the inline selection/);
+  assert.equal(s.list().length,0);
+}));
+
+test('a rejected multiline anchor identifies a unique matching original line', async()=>fixture(async s=>{
+  const before=await s.read('a.py');
+  await assert.rejects(s.proposePatch('a.py','def selected():\n    return 999','replacement'),/Original line 2 matches exactly: "def selected\(\):"/);
+  assert.equal(s.list().length,0);
+  assert.equal(await s.read('a.py'),before);
+}));
+
+test('explicit revision replaces only the same original range and leaves other staged edits intact', async()=>fixture(async s=>{
+  const before=await s.read('a.py');
+  const first=await s.proposePatch('a.py','return 1','return 2');
+  await s.proposePatch('a.py','HEADER','NEW HEADER');
+  await assert.rejects(s.proposePatch('a.py','HEADER\n','other',true),/exact original range.*"return 1"/);
+  await assert.rejects(s.proposePatch('a.py','return 99','return 3',true),/old_text does not match.*"return 1"/);
+  const revised=await s.proposePatch('a.py','return 1','return 3',true);
+  assert.equal(revised.id,first.id);
+  await assert.rejects(s.proposePatch('a.py','return 3','return 4'),/matches the current staged replacement.*replace_existing: true/);
+  const partial = await s.proposePatch('a.py','return 3','return 4',true);
+  assert.equal(partial.id,first.id);
+  assert.equal(partial.after,before.replace('HEADER','NEW HEADER').replace('return 1','return 4'));
+  assert.equal(revised.after,before.replace('HEADER','NEW HEADER').replace('return 1','return 3'));
+  assert.equal(await s.read('a.py'),before);
+}));

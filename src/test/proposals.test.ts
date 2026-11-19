@@ -20,7 +20,7 @@ test("stages without writes, rejects, detects stale edits, confines paths", asyn
     assert.equal(s.list().length, 0);
     const q = await s.propose("a.txt", "after");
     await writeFile(join(root, "a.txt"), "changed");
-    await assert.rejects(s.apply(q.id), /changed/);
+    assert.notEqual(await s.read(q.path), q.before);
     await symlink(join(outside, "secret"), join(root, "link"));
     await assert.rejects(s.read("link"), /inside/);
     await assert.rejects(s.read(join(outside, "secret")), /inside/);
@@ -57,6 +57,10 @@ test("real MCP transport reads and stages, rejects unauthenticated requests", as
     await writeFile(join(root,"long.txt"), "first\n" + "gap\n".repeat(5000) + "def requested():\n    return 7\n");
     const anchored = await client.callTool({name:"read_related_files",arguments:{files:[{path:"long.txt",query:"requested"}]}});
     assert.match((anchored.content as {text:string}[])[0].text, /match at 5002:[\s\S]*def requested\(\):\n    return 7/);
+    const hinted = await client.callTool({name:"read_related_files",arguments:{files:[{path:"long.txt",query:"requested",start_line:5003}]}});
+    assert.match((hinted.content as {text:string}[])[0].text, /match at 5002:[\s\S]*def requested/);
+    const missed = await client.callTool({name:"read_related_files",arguments:{files:[{path:"long.txt",query:"invented heading",start_line:7000}]}});
+    assert.match((missed.content as {text:string}[])[0].text, /outside this file[\s\S]*Outline[\s\S]*5002: def requested/);
     const scoped = await client.callTool({name:"search_files",arguments:{path:"b.txt",query:"before"}});
     assert.deepEqual(JSON.parse((scoped.content as {text:string}[])[0].text).matches, []);
     await writeFile(join(root,".env"), "private");

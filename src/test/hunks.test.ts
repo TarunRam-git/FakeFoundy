@@ -71,3 +71,13 @@ test('Git discovery respects ignored untracked paths', async()=>{
     assert.deepEqual((await new ProposalStore(root).discover()).files,['public.txt']);
   }finally {await rm(root,{recursive:true,force:true});}
 });
+
+test('small edits far apart in a large file remain separately reviewable',()=>{
+  const middle=Array.from({length: 2000},(_,i)=>`unchanged ${i}\n`).join('');
+  const before='old first\n'+middle+'old last\n';
+  const after='new first\n'+middle+'new last\n';
+  const hunks=diffHunks(before,after);
+  assert.equal(hunks.length,2);
+  assert.equal(applyHunks(before,hunks,[1]),'old first\n'+middle+'new last\n');
+  assert.equal(applyHunks(before,hunks,[0,1]),after);
+});
