@@ -200,8 +200,16 @@ export async function runTurn(
             if (event.state.status === "done" && event.state.requiredActions?.length)
               throw new Error("TrueForge ended with unresolved required actions; not completed");
             terminal = true;
-            if (event.state.status === "error")
-              throw new Error(`TrueForge turn failed: ${event.state.message}`);
+            if (event.state.status === "error") {
+              const detail = event.state.message;
+              if (detail.startsWith("[Model Error]")) {
+                if (/Cannot connect to API|ECONNREFUSED|ENOTFOUND/i.test(detail))
+                  throw new Error(`TrueForge could not reach the provider for ${models[attempt]}. Check its endpoint in TrueForge Settings.`);
+                if (/\b401\b|UNAUTHENTICATED|invalid api key|api key not valid/i.test(detail))
+                  throw new Error(`The provider rejected credentials for ${models[attempt]}. Update the API key in TrueForge Settings.`);
+              }
+              throw new Error(`TrueForge turn failed: ${detail}`);
+            }
             if (event.state.status === "cancelled") throw new RunCancelledError();
             if (event.state.status !== "done") throw new Error("Unknown TrueForge terminal state");
             break;

@@ -55,6 +55,7 @@ export function activate(context: vscode.ExtensionContext) {
       }
       busy = true;
       let reviewAfterRun = false;
+      let failed = false;
       let timer: ReturnType<typeof setTimeout> | undefined;
       let timedOut = false;
       let rollback: (() => void) | undefined;
@@ -199,7 +200,8 @@ export function activate(context: vscode.ExtensionContext) {
           panel.append("\n" + message + "\n"); output.appendLine(message);
           void vscode.window.showInformationMessage(message);
         } else {
-          const message = e instanceof Error ? e.message : "Run failed";
+          failed = true;
+          const message = `${e instanceof Error ? e.message : "Run failed"} No edits were applied.`;
           panel.append(`\nError: ${message}\n`);
           void vscode.window.showErrorMessage(`FakeFoundy: ${message}`);
         }
@@ -210,7 +212,7 @@ export function activate(context: vscode.ExtensionContext) {
         await bridge?.close();
         bridge = undefined;
         cancellation?.dispose();
-        panel.finish();
+        panel.finish(failed ? "Failed" : "Ready");
         activeRun = undefined;
         busy = false;
         if (reviewAfterRun) await vscode.commands.executeCommand("fakefoundy.review");

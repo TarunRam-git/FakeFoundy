@@ -43,7 +43,7 @@ window.addEventListener('message',({data})=>{document.getElementById('stream').t
   cancelling() { this.status = "Cancelling…"; this.update(); }
   append(text: string) { this.text = (this.text + text).slice(-100000); this.update(); }
   event(event: unknown) { const text = this.formatter.format(event); if (text) this.append(text); }
-  finish() { this.active = false; this.status = "Ready"; this.update(); }
+  finish(status = "Ready") { this.active = false; this.status = status; this.update(); }
   private update() { void this.panel?.webview.postMessage({text:this.text,active:this.active,status:this.status}); }
   dispose() { this.panel?.dispose(); }
 }
