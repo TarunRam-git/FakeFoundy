@@ -8,9 +8,6 @@ dist/
 *.db-*
 *.vsix
 
-# Local tests, rehearsal workspaces, and verification evidence.
+# Local rehearsal workspaces and verification evidence.
 /.validation/
-/src/test/
-/scripts/test/
-/scripts/smoke.mjs
 /docs/verification.md

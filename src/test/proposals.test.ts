@@ -1,0 +1,110 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { mkdtemp, writeFile, readFile, symlink, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { ProposalStore } from "../proposals.js";
+import { startBridge } from "../bridge.js";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+test("stages without writes, rejects, detects stale edits, confines paths", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ff-"));
+  const outside = await mkdtemp(join(tmpdir(), "outside-"));
+  try {
+    await writeFile(join(root, "a.txt"), "before");
+    await writeFile(join(outside, "secret"), "secret");
+    const s = new ProposalStore(root);
+    const p = await s.propose("a.txt", "after");
+    assert.equal(await s.read("a.txt"), "before");
+    s.reject(p.id);
+    assert.equal(s.list().length, 0);
+    const q = await s.propose("a.txt", "after");
+    await writeFile(join(root, "a.txt"), "changed");
+    assert.notEqual(await s.read(q.path), q.before);
+    await symlink(join(outside, "secret"), join(root, "link"));
+    await assert.rejects(s.read("link"), /inside/);
+    await assert.rejects(s.read(join(outside, "secret")), /inside/);
+  } finally {
+    await rm(root, { recursive: true });
+    await rm(outside, { recursive: true });
+  }
+});
+test("real MCP transport reads and stages, rejects unauthenticated requests", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ff-mcp-"));
+  await writeFile(join(root, "a.txt"), "before");
+  const store = new ProposalStore(root);
+  const bridge = await startBridge(store, 0);
+  const client = new Client({ name: "integration-test", version: "1" });
+  try {
+    assert.equal((await fetch(bridge.url, { method: "POST" })).status, 401);
+    await client.connect(
+      new StreamableHTTPClientTransport(new URL(bridge.url), {
+        requestInit: { headers: { Authorization: `Bearer ${bridge.token}` } },
+      }),
+    );
+    const listed = await client.listTools();
+    assert.deepEqual(
+      listed.tools.map((t) => t.name),
+      ["list_files", "search_files", "read_related_files", "fakefoundy_read_file", "read_file", "propose_selection", "propose_patch", "review_staged_edits", "propose_edit", "run_terminal"],
+    );
+    await writeFile(join(root,"b.txt"), "related");
+    await writeFile(join(root,"long.txt"), "x".repeat(49000));
+    const batch = await client.callTool({name:"read_related_files",arguments:{files:[{path:"a.txt"},{path:"b.txt"},{path:"long.txt"}]}});
+    const texts = (batch.content as {text:string}[]).map(item => item.text);
+    assert.deepEqual(texts.slice(0,2), ["a.txt\nbefore", "b.txt\nrelated"]);
+    assert.ok(texts.join("").length < 24000);
+    assert.match(texts[2], /Last characters:/);
+    await writeFile(join(root,"long.txt"), "first\n" + "gap\n".repeat(5000) + "def requested():\n    return 7\n");
+    const anchored = await client.callTool({name:"read_related_files",arguments:{files:[{path:"long.txt",query:"requested"}]}});
+    assert.match((anchored.content as {text:string}[])[0].text, /match at 5002:[\s\S]*def requested\(\):\n    return 7/);
+    const hinted = await client.callTool({name:"read_related_files",arguments:{files:[{path:"long.txt",query:"requested",start_line:5003}]}});
+    assert.match((hinted.content as {text:string}[])[0].text, /match at 5002:[\s\S]*def requested/);
+    const missed = await client.callTool({name:"read_related_files",arguments:{files:[{path:"long.txt",query:"invented heading",start_line:7000}]}});
+    assert.match((missed.content as {text:string}[])[0].text, /outside this file[\s\S]*Outline[\s\S]*5002: def requested/);
+    const scoped = await client.callTool({name:"search_files",arguments:{path:"b.txt",query:"before"}});
+    assert.deepEqual(JSON.parse((scoped.content as {text:string}[])[0].text).matches, []);
+    await writeFile(join(root,".env"), "private");
+    const denied = await client.callTool({name:"read_related_files",arguments:{files:[{path:"a.txt"},{path:".env"}]}});
+    assert.equal(denied.isError,true);
+    const range = await client.callTool({name:"fakefoundy_read_file",arguments:{path:"a.txt",start_line:1,max_lines:1}});
+    const rangeContent = range.content as {type:string;text?:string}[];
+    assert.deepEqual(JSON.parse(rangeContent[0].text!), {path:"a.txt",start_line:1,start_column:0,text:"before",total_lines:1,has_more:false,next:null});
+    store.setInlineScope({path:"a.txt",oldText:"before"});
+    const blocked = await client.callTool({name:"propose_edit",arguments:{path:"a.txt",content:"snippet"}});
+    assert.equal(blocked.isError,true);
+    const patch = await client.callTool({name:"propose_selection",arguments:{new_text:"patched"}});
+    assert.notEqual(patch.isError,true);
+    assert.equal(store.list()[0].after,"patched");
+    assert.equal(await readFile(join(root,"a.txt"),"utf8"),"before");
+    store.reject(store.list()[0].id);
+    store.setInlineScope();
+    const full = await client.callTool({name:"propose_edit",arguments:{path:"a.txt",content:"after"}});
+    assert.equal(full.isError,true);
+    assert.equal(store.list().length,0);
+    await client.callTool({name:"propose_patch",arguments:{path:"a.txt",old_text:"before",new_text:"after"}});
+    assert.equal(store.list().length, 1);
+    const review = await client.callTool({name:"review_staged_edits",arguments:{}});
+    assert.notEqual(review.isError,true);
+    assert.equal(store.list().length, 1);
+    assert.equal(await readFile(join(root, "a.txt"), "utf8"), "before");
+  } finally {
+    await client.close();
+    await bridge.close();
+    await rm(root, { recursive: true });
+  }
+});
+
+test("blocks sensitive paths and oversized files", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ff-sensitive-"));
+  try {
+    const s = new ProposalStore(root);
+    await writeFile(join(root, ".env"), "token=private");
+    await writeFile(join(root, "large.txt"), Buffer.alloc(1024 * 1024 + 1));
+    await symlink(join(root, ".env"), join(root, "alias.txt"));
+    await assert.rejects(s.read(".env"), /Sensitive/);
+    await assert.rejects(s.read("alias.txt"), /Sensitive/);
+    await assert.rejects(s.read("large.txt"), /1 MiB/);
+  } finally {
+    await rm(root, { recursive: true });
+  }
+});

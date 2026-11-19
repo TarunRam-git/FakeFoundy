@@ -124,4 +124,6 @@ Use Conventional Commits and preserve the MIT license. Agent definition:
 [API overview](https://trueforge.dev/api/overview), and
 [jsdiff](https://github.com/kpdecker/jsdiff) (BSD-3-Clause) for line differencing.
 
-`npm test` and `npm run smoke` require the Git-ignored local validation files.
+Run `npm test` from the repository root. For `npm run smoke`, start a dedicated
+local TrueForge instance with loopback access. Set `TRUEFORGE_URL` if it listens
+on a port other than 8790. The smoke test uses a local model stub.
