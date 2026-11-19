@@ -20,7 +20,7 @@ export function isSandboxRecipe(request: TerminalRequest): boolean {
   if (request.command !== "python3" || request.args[0] !== "-m" || !["pytest", "unittest"].includes(request.args[1])) return false;
   if (request.args.length > 16) return false;
   return request.args.slice(2).every(arg =>
-    ["-q", "-v", "--disable-warnings", "--maxfail=1", "discover", "-s", "-p"].includes(arg) ||
+    ["-q", "-v", "--disable-warnings", "--maxfail=1", "discover", "-s", "-p", "-k"].includes(arg) ||
     (/^[a-zA-Z0-9_][a-zA-Z0-9_./*:-]{0,200}$/.test(arg) && !arg.split(/[/:]/).includes("..")));
 }
 
@@ -78,7 +78,8 @@ export async function runSandboxTerminal(store: ProposalStore, input: TerminalRe
     args.push("--proc","/proc","--dev","/dev","--size","67108864","--tmpfs","/tmp","--dir","/home","--dir","/home/test",
       "--ro-bind",snapshot,"/workspace","--chdir","/workspace","--setenv","HOME","/home/test",
       "--setenv","PATH","/usr/bin:/bin","--setenv","LANG","C.UTF-8","--setenv","PYTHONPATH","/workspace/src:/workspace",
-      "--setenv","PYTHONDONTWRITEBYTECODE","1","--setenv","PYTEST_DISABLE_PLUGIN_AUTOLOAD","1","--remount-ro","/dev","--remount-ro","/proc","--remount-ro","/",
+      "--setenv","PYTHONDONTWRITEBYTECODE","1","--setenv","PYTEST_DISABLE_PLUGIN_AUTOLOAD","1",
+      "--setenv","PYTEST_ADDOPTS","-o cache_dir=/tmp/pytest-cache","--remount-ro","/dev","--remount-ro","/proc","--remount-ro","/",
       "--","/usr/bin/prlimit","--as=268435456","--cpu=30","--fsize=8388608","--nproc=1","--nofile=128","--",
       "/usr/bin/python3",...request.args);
     const result=await supervise("/usr/bin/bwrap",args,signal);

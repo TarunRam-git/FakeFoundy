@@ -32,11 +32,3 @@ across setup, model execution, and fallback. Cancel stops the TrueForge session
 and its native backoff. If retries exhaust, the existing failed-attempt rollback
 and optional configured-model fallback apply. Do not increase the timeout merely
 to hide a persistent daily-quota or billing error.
-
-## Verification
-
-`npm test` covers the launcher bounds, an actual pinned TrueForge transport 429 →
-200 loopback response with byte-identical POST replay, a non-retried 401, and
-cancellation during a four-second backoff with no subsequent request. Tests make
-no provider calls and use no paid quota. They verify retry transport semantics,
-not successful completion of a real-model benchmark.
