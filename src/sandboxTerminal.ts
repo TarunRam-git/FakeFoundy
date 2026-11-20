@@ -69,7 +69,7 @@ export async function runSandboxTerminal(store: ProposalStore, input: TerminalRe
     if(signal?.aborted) return {status:"cancelled",stdout:"",stderr:"Cancelled before approval.",truncated:false};
     if(!approve || !(await approve(request))) return {status:"denied",stdout:"",stderr:"Explicit approval was not granted. No repository code executed.",truncated:false};
     if(signal?.aborted) return {status:"cancelled",stdout:"",stderr:"Cancelled before execution.",truncated:false};
-    snapshot=await mkdtemp(join(tmpdir(),"patchlight-test-"));
+    snapshot=await mkdtemp(join(tmpdir(),"fakefoundy-test-"));
     await prepareSnapshot(store,snapshot,signal);
     const args=[...SANDBOX_NAMESPACE_ARGS,"--die-with-parent","--new-session","--uid",String(process.getuid!()),"--gid",String(process.getgid!()),"--cap-drop","ALL","--clearenv"];
     for(const path of ["/usr/bin","/usr/lib","/usr/lib64","/bin","/lib","/lib64"]) {

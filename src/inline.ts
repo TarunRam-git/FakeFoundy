@@ -2,13 +2,13 @@ import * as vscode from "vscode";
 import { ProposalStore } from "./proposals.js";
 /** Capture selection before opening input; never changes focus until user invokes command. */
 export function registerInline(context: vscode.ExtensionContext) {
-  context.subscriptions.push(vscode.commands.registerCommand("patchlight.inline",async()=>{
+  context.subscriptions.push(vscode.commands.registerCommand("fakefoundy.inline",async()=>{
     const editor=vscode.window.activeTextEditor;
     if (!editor || editor.selection.isEmpty) {
       void vscode.window.showInformationMessage("Select the code to edit first."); return;
     }
     if (!vscode.workspace.isTrusted) {
-      void vscode.window.showErrorMessage("Trust this workspace before running PatchLight."); return;
+      void vscode.window.showErrorMessage("Trust this workspace before running FakeFoundy."); return;
     }
     const folder=vscode.workspace.getWorkspaceFolder(editor.document.uri);
     if (!folder || folder.uri.toString() !== vscode.workspace.workspaceFolders?.[0]?.uri.toString()) {
@@ -31,8 +31,8 @@ export function registerInline(context: vscode.ExtensionContext) {
     if (Buffer.byteLength(selected)>16000 || selected.split("\n").length>200) {
       void vscode.window.showErrorMessage("Select a smaller region (up to 16 KB and 200 lines) for inline editing."); return;
     }
-    const instruction=await vscode.window.showInputBox({prompt:"How should PatchLight edit the selected code?"});
+    const instruction=await vscode.window.showInputBox({prompt:"How should FakeFoundy edit the selected code?"});
     if (!instruction?.trim()) return;
-    await vscode.commands.executeCommand("patchlight.start", instruction, {path:file, oldText:selected, selection:captured}, line);
+    await vscode.commands.executeCommand("fakefoundy.start", instruction, {path:file, oldText:selected, selection:captured}, line);
   }));
 }

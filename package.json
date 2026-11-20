@@ -1,7 +1,7 @@
 {
-  "name": "patchlight",
-  "displayName": "PatchLight",
-  "description": "Review and apply AI-proposed edits in VS Code with a local TrueForge agent",
+  "name": "fakefoundy",
+  "displayName": "FakeFoundy",
+  "description": "TrueForge-native coding agent proof of integration",
   "version": "0.1.0",
   "private": true,
   "engines": {
@@ -10,60 +10,60 @@
   },
   "main": "./dist/extension.js",
   "activationEvents": [
-    "onCommand:patchlight.start",
-    "onCommand:patchlight.inline"
+    "onCommand:fakefoundy.start",
+    "onCommand:fakefoundy.inline"
   ],
   "contributes": {
     "commands": [
       {
-        "command": "patchlight.start",
-        "title": "PatchLight: Start TrueForge Agent"
+        "command": "fakefoundy.start",
+        "title": "FakeFoundy: Start TrueForge Agent"
       },
       {
-        "command": "patchlight.review",
-        "title": "PatchLight: Review Proposed Edit"
+        "command": "fakefoundy.review",
+        "title": "FakeFoundy: Review Proposed Edit"
       },
       {
-        "command": "patchlight.cancel",
-        "title": "PatchLight: Cancel Run"
+        "command": "fakefoundy.cancel",
+        "title": "FakeFoundy: Cancel Run"
       },
       {
-        "command": "patchlight.inline",
-        "title": "PatchLight: Edit Selection"
+        "command": "fakefoundy.inline",
+        "title": "FakeFoundy: Edit Selection"
       },
       {
-        "command": "patchlight.panel",
-        "title": "PatchLight: Open Agent Panel"
+        "command": "fakefoundy.panel",
+        "title": "FakeFoundy: Open Agent Panel"
       }
     ],
     "configuration": {
-      "title": "PatchLight",
+      "title": "FakeFoundy",
       "properties": {
-        "patchlight.baseUrl": {
+        "fakefoundy.baseUrl": {
           "type": "string",
           "default": "http://127.0.0.1:8790"
         },
-        "patchlight.model": {
+        "fakefoundy.model": {
           "type": "string",
           "default": "openai/gpt-4.1-mini"
         },
-        "patchlight.mcpPort": {
+        "fakefoundy.mcpPort": {
           "type": "number",
           "default": 31337
         },
-        "patchlight.fallbackModel": {
+        "fakefoundy.fallbackModel": {
           "type": "string",
           "default": "",
           "description": "Optional second TrueForge model to try once after an unsuccessful primary run. Failed-attempt proposals are discarded."
         },
-        "patchlight.runTimeoutSeconds": {
+        "fakefoundy.runTimeoutSeconds": {
           "type": "number",
           "default": 300,
           "minimum": 10,
           "maximum": 1800,
           "description": "Maximum run duration, including fallback, before cancellation."
         },
-        "patchlight.contextBudgetBytes": {
+        "fakefoundy.contextBudgetBytes": {
           "type": "number",
           "default": 16000,
           "minimum": 256,
@@ -74,7 +74,7 @@
     },
     "keybindings": [
       {
-        "command": "patchlight.inline",
+        "command": "fakefoundy.inline",
         "key": "ctrl+alt+i",
         "mac": "cmd+alt+i",
         "when": "editorTextFocus && editorHasSelection && !editorReadonly"

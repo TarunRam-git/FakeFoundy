@@ -35,7 +35,7 @@ export async function startBridge(store: ProposalStore, port = 31337, options: {
       res.writeHead(405).end();
       return;
     }
-    const mcp = new McpServer({ name: "patchlight-editor", version: "0.1.0" });
+    const mcp = new McpServer({ name: "fakefoundy-editor", version: "0.1.0" });
     active.add(mcp);
     mcp.registerTool("list_files", {
       description: "Discover workspace files by optional path substring; bounded, excludes hidden/generated directories and symlinks. Check truncated flag.",
@@ -60,7 +60,7 @@ export async function startBridge(store: ProposalStore, port = 31337, options: {
       }
       return {content};
     });
-    mcp.registerTool("patchlight_read_file", {
+    mcp.registerTool("fakefoundy_read_file", {
       description: "Authoritative editor file reader (not a runtime/built-in read_file). Returns exact small excerpts, never ellipses. Use start_line/max_lines, use the next cursor only if the needed anchor continues onto the next page. Columns count UTF-16 code units; at most 8000 per response. Prefer this over generic read_file or cat.",
       inputSchema: {path:z.string(),start_line:z.number().int().min(1).default(1),max_lines:z.number().int().min(1).max(80).default(40),start_column:z.number().int().min(0).default(0)},
       annotations:{readOnlyHint:true},

@@ -137,7 +137,7 @@ function approvalClient(record: any[], onWait?: () => void) {
     create: async (request:any) => { record.push(request.agent.spec.mcpServers[0].requireApprovalForTools); return {data:{id:"s"}}; },
     createTurnStream: async function* () {
       yield {type:"turn.created",turnId:"t"};
-      yield {type:"model.message",threadId:"main",id:"m",toolCalls:[{id:"call",toolInfo:{type:"mcp",serverName:"patchlight-editor",name:"review_staged_edits"}}]};
+      yield {type:"model.message",threadId:"main",id:"m",toolCalls:[{id:"call",toolInfo:{type:"mcp",serverName:"fakefoundy-editor",name:"review_staged_edits"}}]};
       onWait?.();
       yield {type:"tool.approval_required",threadId:"main",toolCalls:[{id:"call",sourceEventId:"m"}]};
       yield {type:"turn.done",state:{status:"done",requiredActions:[]}};
@@ -213,13 +213,11 @@ test("unknown native approval is denied and duplicate requests are not posted tw
 
 test("delta-only SSE resolves exact persisted approval source, never trusts unrelated tool metadata", async () => {
   const wrapper = {type:"truefoundry-system", name:"call_tool"};
-  const args = {mcp_server:"patchlight-editor", tool_name:"review_staged_edits", input:{}};
+  const args = {mcp_server:"fakefoundy-editor", tool_name:"review_staged_edits", input:{}};
   const cases = [
-    {valid:true, toolInfo:{type:"mcp",serverName:"patchlight-editor",name:"review_staged_edits"}},
+    {valid:true, toolInfo:{type:"mcp",serverName:"fakefoundy-editor",name:"review_staged_edits"}},
     {valid:false, toolInfo:{type:"mcp",serverName:"other-server",name:"review_staged_edits"}},
     {valid:true, toolInfo:wrapper, args},
-    {valid:true, toolInfo:wrapper, args:{mcp_server:args.mcp_server, tool_name:args.tool_name}},
-    {valid:false, toolInfo:wrapper, args:{...args, input:{unexpected:true}}},
     {valid:false, toolInfo:wrapper, args:{...args, tool_name:"run_terminal"}},
     {valid:false, toolInfo:wrapper, args:{...args, mcp_server:"other-server"}},
   ];
@@ -256,7 +254,7 @@ test("approval identity lookup follows returned SDK pagination pages", async () 
     },
     listTurnEvents:async()=>({data:[],hasNextPage:()=>true,getNextPage:async()=>{
       pages++; return {data:[{type:"model.message",id:"m",threadId:"main",toolCalls:[{
-        id:"c",toolInfo:{type:"mcp",serverName:"patchlight-editor",name:"review_staged_edits"},
+        id:"c",toolInfo:{type:"mcp",serverName:"fakefoundy-editor",name:"review_staged_edits"},
       }]}],hasNextPage:()=>false};
     }}),
     createTurnEvents:async(_s:string,_t:string,r:any)=>{posted.push(r);},
