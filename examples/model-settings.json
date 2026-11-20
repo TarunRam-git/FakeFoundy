@@ -1,6 +1,6 @@
 {
-  "fakefoundy.baseUrl": "http://127.0.0.1:8790",
-  "fakefoundy.model": "google-gemini/demo",
-  "fakefoundy.contextBudgetBytes": 96000,
-  "fakefoundy.runTimeoutSeconds": 600
+  "patchlight.baseUrl": "http://127.0.0.1:8790",
+  "patchlight.model": "openai/luna",
+  "patchlight.contextBudgetBytes": 96000,
+  "patchlight.runTimeoutSeconds": 600
 }

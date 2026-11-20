@@ -62,7 +62,7 @@ try {
   await client.settings.modelProviders.createOrUpdate({
     manifest: {
       type: "custom",
-      name: "fakefoundy-smoke",
+      name: "patchlight-smoke",
       baseUrl: `http://127.0.0.1:${model.address().port}/v1`,
       auth: { apiKey: "local-test-not-a-secret" },
       models: [{ name: "test", modelId: "test", properties: {} }],
@@ -70,7 +70,7 @@ try {
   });
   await client.settings.mcpServers.createOrUpdate({
     manifest: {
-      name: "fakefoundy-editor",
+      name: "patchlight-editor",
       description: "Local smoke bridge",
       type: "remote",
       url: bridge.url,
@@ -85,7 +85,7 @@ try {
   const types = new Set();
   const session = await runTurn(
     client,
-    "fakefoundy-smoke/test",
+    "patchlight-smoke/test",
     "Read hello.txt then propose replacing its contents with after.",
     (e) => {
       events++;

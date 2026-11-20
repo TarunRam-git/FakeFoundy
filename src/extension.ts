@@ -9,8 +9,8 @@ import { AgentPanel } from "./panel.js";
 export function activate(context: vscode.ExtensionContext) {
   registerInline(context);
   const panel = new AgentPanel();
-  context.subscriptions.push(panel, vscode.commands.registerCommand("fakefoundy.panel", () => panel.show()));
-  const output = vscode.window.createOutputChannel("FakeFoundy");
+  context.subscriptions.push(panel, vscode.commands.registerCommand("patchlight.panel", () => panel.show()));
+  const output = vscode.window.createOutputChannel("PatchLight");
   let store: ProposalStore | undefined;
   let bridge: Awaited<ReturnType<typeof startBridge>> | undefined;
   let busy = false;
@@ -18,14 +18,14 @@ export function activate(context: vscode.ExtensionContext) {
   let activeRun: AbortController | undefined;
   const previews = new Map<string, string>();
   const previewUri = (id: string, path: string, version: string, text: string) => {
-    const uri = vscode.Uri.from({scheme: "fakefoundy-preview", path: `/${id}/${version}/${basename(path)}`});
+    const uri = vscode.Uri.from({scheme: "patchlight-preview", path: `/${id}/${version}/${basename(path)}`});
     previews.set(uri.toString(), text);
     return uri;
   };
   context.subscriptions.push(
     output,
     vscode.workspace.onDidCloseTextDocument(doc => previews.delete(doc.uri.toString())),
-    vscode.workspace.registerTextDocumentContentProvider("fakefoundy-preview", {
+    vscode.workspace.registerTextDocumentContentProvider("patchlight-preview", {
       provideTextDocumentContent: (uri) => previews.get(uri.toString()) ?? "",
     }),
   );
@@ -36,11 +36,11 @@ export function activate(context: vscode.ExtensionContext) {
     },
   });
   context.subscriptions.push(
-    vscode.commands.registerCommand("fakefoundy.cancel", () => activeRun?.abort()),
-    vscode.commands.registerCommand("fakefoundy.start", async (providedPrompt?: string, inline?: InlineScope, inlineLine?: number) => {
+    vscode.commands.registerCommand("patchlight.cancel", () => activeRun?.abort()),
+    vscode.commands.registerCommand("patchlight.start", async (providedPrompt?: string, inline?: InlineScope, inlineLine?: number) => {
       if (!vscode.workspace.isTrusted) {
         void vscode.window.showErrorMessage(
-          "Trust this workspace before running FakeFoundy.",
+          "Trust this workspace before running PatchLight.",
         );
         return;
       }
@@ -66,7 +66,7 @@ export function activate(context: vscode.ExtensionContext) {
         });
         if (!prompt?.trim()) return;
         panel.start(prompt);
-        const config = vscode.workspace.getConfiguration("fakefoundy");
+        const config = vscode.workspace.getConfiguration("patchlight");
         const seconds = config.get<number>("runTimeoutSeconds", 300);
         if (!Number.isFinite(seconds) || seconds < 10 || seconds > 1800)
           throw new Error("runTimeoutSeconds must be between 10 and 1800");
@@ -82,7 +82,7 @@ export function activate(context: vscode.ExtensionContext) {
         timer = setTimeout(() => { timedOut = true; controller.abort(); }, seconds * 1000);
         await vscode.window.withProgress({
           location: vscode.ProgressLocation.Notification,
-          title: "FakeFoundy is working", cancellable: true,
+          title: "PatchLight is working", cancellable: true,
         }, async (_progress, token) => {
           const subscription = token.onCancellationRequested(() => controller.abort());
           try {
@@ -112,7 +112,7 @@ export function activate(context: vscode.ExtensionContext) {
             if (controller.signal.aborted) throw new RunCancelledError();
             await client.settings.mcpServers.createOrUpdate({
               manifest: {
-                name: "fakefoundy-editor", description: "FakeFoundy local editor read and staged-edit tools",
+                name: "patchlight-editor", description: "PatchLight local editor read and staged-edit tools",
                 type: "remote", url: bridge.url,
                 auth: { type: "header", headers: { Authorization: `Bearer ${bridge.token}` } },
               },
@@ -143,7 +143,7 @@ export function activate(context: vscode.ExtensionContext) {
                   if (controller.signal.aborted) return undefined;
                   panel.append(`\nWaiting for your answer:\n${question}\n`);
                   const answer=await vscode.window.showInputBox({
-                      title:"FakeFoundy needs your answer", prompt:question, ignoreFocusOut:true,
+                      title:"PatchLight needs your answer", prompt:question, ignoreFocusOut:true,
                       placeHolder:"Answer to continue; Escape cancels the run",
                       validateInput:value=>value.trim() && value.length<=16000 ? undefined : "Enter an answer of 1–16000 characters",
                   },cancellationToken);
@@ -203,7 +203,7 @@ export function activate(context: vscode.ExtensionContext) {
           failed = true;
           const message = `${e instanceof Error ? e.message : "Run failed"} No edits were applied.`;
           panel.append(`\nError: ${message}\n`);
-          void vscode.window.showErrorMessage(`FakeFoundy: ${message}`);
+          void vscode.window.showErrorMessage(`PatchLight: ${message}`);
         }
       } finally {
         if (timer) clearTimeout(timer);
@@ -215,12 +215,12 @@ export function activate(context: vscode.ExtensionContext) {
         panel.finish(failed ? "Failed" : "Ready");
         activeRun = undefined;
         busy = false;
-        if (reviewAfterRun) await vscode.commands.executeCommand("fakefoundy.review");
+        if (reviewAfterRun) await vscode.commands.executeCommand("patchlight.review");
       }
     }),
   );
   context.subscriptions.push(
-    vscode.commands.registerCommand("fakefoundy.review", async () => {
+    vscode.commands.registerCommand("patchlight.review", async () => {
       if (busy || reviewing) {
         void vscode.window.showInformationMessage("Wait for the run to finish or cancel it before reviewing edits.");
         return;
@@ -243,7 +243,7 @@ export function activate(context: vscode.ExtensionContext) {
         "vscode.diff",
         before,
         after,
-        `FakeFoundy proposed edit: ${picked.label}`,
+        `PatchLight proposed edit: ${picked.label}`,
       );
       const selected = await vscode.window.showQuickPick(
         p.hunks.map(h => ({
@@ -259,7 +259,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (!selected.length) { store.reject(p.id); return; }
       const selectedAfter = store.preview(p.id, selected.map(h=>h.id));
       const selectedUri = previewUri(p.id, p.path, `selected-${Date.now()}`, selectedAfter);
-      await vscode.commands.executeCommand("vscode.diff", before, selectedUri, `FakeFoundy selected hunks: ${picked.label}`);
+      await vscode.commands.executeCommand("vscode.diff", before, selectedUri, `PatchLight selected hunks: ${picked.label}`);
       const answer = await vscode.window.showQuickPick(["Apply", "Reject"], {
         title: `Apply ${selected.length} selected hunk(s) · ${picked.label}`,
         placeHolder: "Apply to the editor buffer and discard unselected hunks",
@@ -293,7 +293,7 @@ export function activate(context: vscode.ExtensionContext) {
         } else void vscode.window.showErrorMessage("The editor changed before the edit could be applied. Review it again.");
       }
       } catch (error) {
-        void vscode.window.showErrorMessage(`FakeFoundy could not review the edit. ${error instanceof Error ? error.message : "Unexpected editor error."}`);
+        void vscode.window.showErrorMessage(`PatchLight could not review the edit. ${error instanceof Error ? error.message : "Unexpected editor error."}`);
       } finally { reviewing = false; }
     }),
   );

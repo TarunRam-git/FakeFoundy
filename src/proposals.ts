@@ -181,7 +181,7 @@ export class ProposalStore {
           const line = before.slice(0, before.indexOf(hint)).split("\n").length;
           throw new Error(`old_text does not match original disk text. Nothing was staged. Original line ${line} matches exactly: ${JSON.stringify(hint)}. For an insertion, use just this line as old_text and preserve it in new_text. For a replacement, read the exact range around line ${line}.`);
         }
-        throw new Error("old_text does not match original disk text. Nothing was staged. Read only the target line range with fakefoundy_read_file, copy a short unique anchor exactly, then correct the patch; do not restart repository discovery.");
+        throw new Error("old_text does not match original disk text. Nothing was staged. Read only the target line range with patchlight_read_file, copy a short unique anchor exactly, then correct the patch; do not restart repository discovery.");
       }
       if (!selection && !revision && before.indexOf(oldText,originalIndex+1)>=0) throw new Error("old_text is not unique; include more context");
       const replaced = exact ?? revision;

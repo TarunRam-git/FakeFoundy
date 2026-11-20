@@ -27,7 +27,7 @@ hints fall back to exponential backoff. This launcher does not patch dependencie
 replace the guarded transport, bypass provider quotas, or call providers directly.
 It cannot fix exhausted daily quota or a model unavailable to the account.
 
-The extension's overall `fakefoundy.runTimeoutSeconds` (default 300) still applies
+The extension's overall `patchlight.runTimeoutSeconds` (default 300) still applies
 across setup, model execution, and fallback. Cancel stops the TrueForge session
 and its native backoff. If retries exhaust, the existing failed-attempt rollback
 and optional configured-model fallback apply. Do not increase the timeout merely

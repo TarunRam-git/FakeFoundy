@@ -4,7 +4,7 @@ import {runTurn} from '../client.js';
 function fixture(options:{toolType?:string; malformed?:boolean; wrongThread?:boolean; duplicate?:boolean; pageTwo?:boolean; choices?:boolean}={}) {
   const posts:any[]=[], calls:string[]=[];
   const source={type:'model.message',id:'source',threadId:options.wrongThread?'wrong':'thread',toolCalls:[{
-    id:'question-call',toolInfo:{type:options.toolType??'truefoundry-system',name:'ask_user_question',serverName:'fakefoundy-editor'},
+    id:'question-call',toolInfo:{type:options.toolType??'truefoundry-system',name:'ask_user_question',serverName:'patchlight-editor'},
     function:{name:'ask_user_question',arguments:options.malformed?'{invalid':JSON.stringify({question:'Which output format?',...(options.choices?{options:['JSON','plain text']}:{})})},
   }]};
   const page={data:[source],hasNextPage:()=>false};

@@ -58,7 +58,7 @@ test("sandbox isolation succeeds on a capable host (otherwise explicitly skipped
     if(approval){assert.equal(approval.execution,"sandbox");assert.ok(Object.isFrozen(approval.args));}
     assert.equal(await readFile(join(root,"test_probe.py"),"utf8"),source);
     await assert.rejects(readFile(join(root,"host-owned")),/ENOENT/);
-    if ((hostUnavailable || namespaceDenied) && process.env.FAKEFOUNDY_REQUIRE_SANDBOX !== "1") {
+    if ((hostUnavailable || namespaceDenied) && process.env.PATCHLIGHT_REQUIRE_SANDBOX !== "1") {
       t.skip(`Host cannot run sandbox; isolation NOT verified: ${result.stderr.split("\n")[0]}`);
       return;
     }

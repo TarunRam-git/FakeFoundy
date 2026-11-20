@@ -11,14 +11,14 @@ export class AgentPanel implements vscode.Disposable {
   private formatter = new StreamFormatter();
   show() {
     if (this.panel) { this.panel.reveal(undefined, true); return; }
-    this.panel = vscode.window.createWebviewPanel("fakefoundy.agent", "FakeFoundy Agent",
+    this.panel = vscode.window.createWebviewPanel("patchlight.agent", "PatchLight Agent",
       { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true },
       { enableScripts: true, localResourceRoots: [], retainContextWhenHidden: true });
     const nonce = randomBytes(24).toString("hex");
     this.panel.webview.html = `<!doctype html><html><head><meta charset="UTF-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}';">
 <style nonce="${nonce}">body{font-family:var(--vscode-font-family);padding:16px;color:var(--vscode-foreground);background:var(--vscode-editor-background)}textarea{width:95%;min-height:80px;color:inherit;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border)}button{margin:8px 6px 8px 0;padding:7px 12px}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-family:var(--vscode-editor-font-family)}small{display:block;opacity:.8}</style></head><body>
-<h2>FakeFoundy</h2><small>TrueForge agent · Changes stay staged until you review and apply them.</small>
+<h2>PatchLight</h2><small>TrueForge agent · Changes stay staged until you review and apply them.</small>
 <label for="prompt">Task (supports @file:path and @symbol:name)</label><textarea id="prompt" placeholder="Describe the change…"></textarea>
 <div><button id="start">Run</button><button id="cancel">Cancel</button><button id="review">Review edits</button></div>
 <p id="status" role="status">Ready</p><pre id="stream" aria-live="polite"></pre>
@@ -34,9 +34,9 @@ window.addEventListener('message',({data})=>{document.getElementById('stream').t
       const m = message as {type?: string; prompt?: unknown};
       if (m.type === "ready") this.update();
       else if (m.type === "start" && !this.active && typeof m.prompt === "string" && m.prompt.trim() && m.prompt.length <= 32000)
-        void vscode.commands.executeCommand("fakefoundy.start", m.prompt);
-      else if (m.type === "cancel") void vscode.commands.executeCommand("fakefoundy.cancel");
-      else if (m.type === "review" && !this.active) void vscode.commands.executeCommand("fakefoundy.review");
+        void vscode.commands.executeCommand("patchlight.start", m.prompt);
+      else if (m.type === "cancel") void vscode.commands.executeCommand("patchlight.cancel");
+      else if (m.type === "review" && !this.active) void vscode.commands.executeCommand("patchlight.review");
     });
   }
   start(prompt: string) { this.formatter = new StreamFormatter(); this.text = `Task: ${prompt}\n\n`; this.active = true; this.status = "Working…"; this.show(); this.update(); }

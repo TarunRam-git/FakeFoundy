@@ -1,129 +1,78 @@
-# FakeFoundy
+# PatchLight
 
-A VS Code coding-agent extension for the TrueFoundry Forge-a-thon, built from
-scratch. TrueForge owns model execution and the agent/tool loop; the extension
-provides workspace tools, bounded context, streaming UI, and explicit diff review.
-TrueForge is a separately installed dependency, not vendored source.
+PatchLight is a VS Code extension for making reviewable changes across a codebase. Select a function for an inline edit, or give the agent a feature to implement across files. The editor shows which files it retrieved, streams the agent’s progress, and opens native diffs for approval. You choose which hunks to apply and when to save.
 
-## Local setup
+Built from scratch for the TrueFoundry Forge-a-thon at Techfest, IIT Bombay. TrueForge runs locally and owns model execution, sessions, tool calls, and approvals. PatchLight supplies the editor interface and workspace tools.
 
-1. Install Node.js >=22.14 and VS Code >=1.96.
-2. In this repository run `npm ci`, then `npm run build`.
-3. Start the dedicated local runtime with its local editor connector enabled:
-   `HOST=127.0.0.1 OUTBOUND_URL_ALLOWED_HOSTS='["127.0.0.1","generativelanguage.googleapis.com"]' npm run trueforge`.
-   This process permits its tools to reach services on IPv4 loopback. Use it only
-   for your trusted local workspace. The example allows the Google Gemini API;
-   use your configured provider hostname when switching providers.
-   Runtime 0.185.1 and SDK 0.185.0 are pinned. The launcher enables bounded native
-   provider retries; see [retry behavior](docs/runtime-retries.md).
-4. Open http://127.0.0.1:8790 and configure a provider/model in TrueForge. Keep
-   credentials in the runtime configuration, never in this repository or prompts.
-   [Gemini provider example](examples/gemini-provider.json) shows the local HTTP API fields.
-   Use the dashboard to enter the real values.
-5. Open this repository in VS Code and press F5 using **Run FakeFoundy**. In the
-   Extension Development Host, open and trust a disposable workspace.
-6. Enter the values from [the example VS Code model settings](examples/model-settings.json)
-   in the Development Host's user settings. The example uses 96000 initial
-   context bytes and a ten-minute deadline for provider backoff.
-   For the example, configure the Google
-   Gemini provider in TrueForge, enter your API key there, and name a model
-   `demo` with the upstream model ID available to your account. If your provider
-   or model has another name, set `fakefoundy.model` to its exact TrueForge FQN.
-   On each run the extension sends the agent definition in `src/client.ts` when
-   creating the session. The default
-   `openai/gpt-4.1-mini` is only a placeholder unless configured in your runtime.
-   `fakefoundy.baseUrl` defaults to `http://127.0.0.1:8790`.
+## Run locally
 
-Keep both runtime and bridge on loopback. The bridge defaults to port 31337 and
-uses a fresh random bearer capability per run. The runtime must be able to reach
-this bridge. The setup command grants the loopback exception for that runtime process only.
+You need Node.js 22.14 or newer, VS Code or Code OSS 1.96 or newer, and a model configured in TrueForge.
 
-Use a dedicated runtime and one active extension workspace: the connector name
-`fakefoundy-editor` is shared, and each extension run updates that connector.
+1. Clone the repository and install the pinned dependencies.
 
-## Use
+   ```sh
+   git clone https://github.com/TarunRam-git/FakeFoundy.git
+   cd FakeFoundy
+   npm ci
+   npm run build
+   ```
 
-- **FakeFoundy: Open Agent Panel** opens the task input, streamed response,
-  context selection summary, Cancel button, and Review edits button.
-- **FakeFoundy: Start TrueForge Agent** accepts a task through the command palette.
-- Select code and press **Ctrl+Alt+I** (**Cmd+Alt+I** on macOS), or run
-  **FakeFoundy: Edit Selection**. Give an instruction; the resulting proposal is
-  restricted to that captured selection and opens the review flow after success.
-  Save the source file before requesting an inline edit.
-- Reference a file with `@file:src/example.py`, a spaced path with
-  `@file:"some directory/example.py"`, or an identifier with `@symbol:example`.
-  Symbol matching is lexical, not language-server navigation.
-- During a run, TrueForge pauses at `review_staged_edits`. The extension previews
-  each staged file in a native diff with a **Keep staged** or **Reject batch**
-  picker. On Linux, review can request approval to run up to three newly added
-  pytest tests in the isolated snapshot and return their results to the agent.
-  If the model ends a turn with unreviewed proposals, the extension
-  requests review once in the same session. Approval keeps proposals available
-  for hunk review. The panel shows the TrueForge session ID.
-- **FakeFoundy: Review Proposed Edit** opens a native diff. Choose the hunks to
-  accept, inspect the selected-only diff, then Apply or Reject. Unselected hunks
-  are discarded after confirmation. Escape preserves the proposal.
-- Apply changes the editor buffer, not the file on disk. Save accepted changes
-  before running external tests. Normal editor Undo is available. Changes to the
-  file/buffer since proposal creation cause review to fail safely.
-- Built-in agent questions appear in the panel and an editor input box, including
-  any supplied choices. Enter an answer to continue the same turn; Escape cancels
-  the run. Unknown or malformed client-side tools fail clearly rather than leaving
-  the editor waiting. Answers are not copied into the panel or output log.
-- **FakeFoundy: Cancel Run** or the progress/panel Cancel button aborts the request,
-  cancels its remote session, and discards proposals from that failed attempt.
-  Earlier pending proposals are preserved. No agent tool applies edits directly.
+2. Start the dedicated TrueForge runtime from the repository root. This example allows the local editor bridge and the OpenAI API. Substitute the provider hostname if you use another service.
 
-The panel shows which files retrieval selected, why it chose them, and how many
-UTF-8 bytes they used. The initial scan prioritizes filenames that match the
-request before ranking file contents. `fakefoundy.contextBudgetBytes` defaults
-to 16000 (256–131072). If the top three files fit within 85% of that budget, they
-are included in full. Inline requests include the exact selection and retrieve
-additional workspace context when the user includes an explicit reference.
-This budget covers the initial repository context. File
-reads are paginated; the related-file reader returns outlines and targeted excerpts
-for up to three files in one call below TrueForge’s response limit. Discovery/search exclude protected and generated paths.
+   ```sh
+   HOST=127.0.0.1 OUTBOUND_URL_ALLOWED_HOSTS='["127.0.0.1","api.openai.com"]' npm run trueforge
+   ```
 
-Optional settings: `fakefoundy.fallbackModel` selects one separately configured
-fallback; failed-attempt proposals are discarded before it runs.
-`fakefoundy.runTimeoutSeconds` defaults to 300 and covers the whole run, including
-fallback. Unconfirmed remote cancellation stops fallback rather than starting
-another potentially concurrent attempt.
+3. Open the [local TrueForge dashboard](http://127.0.0.1:8790). Add your provider credential and model there. To match the demo, configure OpenAI with model ID `gpt-6-luna` and local model name `luna`. Keep credentials in the runtime. A [Gemini configuration example](examples/gemini-provider.json) illustrates an alternative provider.
+4. Open the extension repository in VS Code. Press **F5** and select **Run PatchLight**. In the Extension Development Host, open and trust the project you want the agent to edit.
+5. In that window’s settings, set `patchlight.model` to the provider/model name you configured, such as `openai/luna`. The [example editor settings](examples/model-settings.json) match the demo configuration. If your workspace has settings from an earlier release, move their values to the corresponding `patchlight.*` keys and update custom keybindings to the new command IDs.
 
-## Tools and limitations
+The runtime and MCP bridge use loopback. Use one active PatchLight workspace per dedicated runtime because the extension updates a shared connector named `patchlight-editor`. The bridge generates a new bearer token for each run.
 
-The MCP bridge supports discovery, search, bounded file reads, selection
-replacement, and composing small disjoint patches against original disk text.
-The agent can explicitly revise a staged patch by reusing its exact original
-range or targeting a unique snippet inside its staged text. The revised result
-goes through review.
-Full-file model replacement is disabled. Proposed text remains staged until
-editor approval. Reads do not include pending patches or unsaved editor edits;
-save accepted edits before starting a dependent task.
+## Use the extension
 
-The terminal tool retains guarded read-only `pwd`, `ls`, and `cat` recipes. It also
-supports fixed `python3 -m pytest` / `python3 -m unittest` recipes with bounded
-arguments and explicit one-time approval. Executable recipes require non-root
-Linux with `/usr/bin/bwrap`, `/usr/bin/prlimit`, `/usr/bin/python3` and permitted
-user/network namespaces. There is **no unsandboxed fallback**.
+| Action | How |
+| --- | --- |
+| Edit selected code | Save the file, select the region and run **PatchLight: Edit Selection**. The shortcut is **Ctrl+Alt+I** (**Cmd+Alt+I** on macOS). The proposed replacement is restricted to that selection. |
+| Request a multi-file change | Run **PatchLight: Open Agent Panel**, enter the task and click **Run**. **PatchLight: Start TrueForge Agent** also accepts a request from the command palette. |
+| Inspect and apply | At the TrueForge approval prompt, preview each file and choose **Keep staged** or **Reject batch**. Then use **Review edits**, select the desired hunks, inspect the selected-only diff and choose **Apply**. Save to write the changes to disk. Normal editor Undo works. |
+| Interrupt a run | Use the panel’s **Cancel** button or **PatchLight: Cancel Run**. The extension aborts the stream, cancels the remote session and drops proposals created by the interrupted attempt. |
+| Answer an agent question | Enter a response in the editor prompt to continue the same turn. Escape cancels the run. Answers stay out of the panel and output log. |
 
-Tests run in a temporary filtered file snapshot including staged text patches, not the
-real workspace. Bounded binary fixtures are copied byte-for-byte, but model-facing
-read tools remain text-only. Staged files are revalidated against the actual opened
-bytes before overlay. The snapshot is read-only inside the sandbox; network, host home,
-credentials and dependency installation are unavailable. Only system Python
-packages are visible, not project virtualenvs. Bounds: 500 files, 1 MiB per file, 20 MiB snapshot,
-30 seconds, 256 MiB address space, no subprocess creation and 16 KiB combined
-output. These restrictions can reject otherwise valid suites. Save/apply is not
-required for snapshot tests, but remains required for external tests. General
-shells, arbitrary Python commands, Flask CLI execution and builds are unsupported.
+During final hunk review, Escape keeps the pending proposal. Applying selected hunks discards the unselected ones. PatchLight checks both the disk file and editor buffer against the original before applying.
 
-Use Conventional Commits and preserve the MIT license. Agent definition:
-[agents/README.md](agents/README.md). Upstream references:
-[TrueForge](https://github.com/truefoundry/trueforge),
-[API overview](https://trueforge.dev/api/overview), and
-[jsdiff](https://github.com/kpdecker/jsdiff) (BSD-3-Clause) for line differencing.
+## How it works
 
-Run `npm test` from the repository root. For `npm run smoke`, start a dedicated
-local TrueForge instance with loopback access. Set `TRUEFORGE_URL` if it listens
-on a port other than 8790. The smoke test uses a local model stub.
+- **Context selection.** Filename and content matches rank candidate files. Explicit references such as `@file:src/app.py`, `@file:"some directory/app.py"` and `@symbol:load_config` get priority. Matching is lexical. The panel shows selected paths, reasons and UTF-8 bytes used. If the top three files together fit within 85% of the budget, the extension includes them in full. Otherwise it selects excerpts. Inline mode sends the selection, with additional retrieval for explicit references. [Context selection](src/context.ts)
+- **TrueForge integration.** The extension submits the agent definition when creating a session, selectively preloads tool schemas and streams turn events. The MCP bridge exposes search, bounded reads, staged patches and approved terminal operations. TrueForge pauses for editor approval on `review_staged_edits`. The panel displays the session ID for inspection in the dashboard. [Agent definition](agents/README.md) · [Client](src/client.ts) · [Editor tools](src/bridge.ts)
+- **Staged edits.** Small patches anchor to unique original text. Disjoint changes can be combined and staged patches can be revised before approval. File reads use saved disk content. Proposed edits stay in memory until review. [Proposal store](src/proposals.ts) · [Hunk selection](src/hunks.ts)
+- **Failure handling.** TrueForge retries eligible provider requests with bounded backoff. An optional second configured model can take over once after an unsuccessful primary run. PatchLight drops failed-attempt proposals first and requires confirmation of remote cancellation when an attempt might still be running. [Retry behavior](docs/runtime-retries.md)
+
+## Settings
+
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `patchlight.model` | `openai/gpt-4.1-mini` | Provider/model name registered in your local runtime |
+| `patchlight.baseUrl` | `http://127.0.0.1:8790` | Local TrueForge HTTP endpoint |
+| `patchlight.mcpPort` | `31337` | Local editor bridge port |
+| `patchlight.contextBudgetBytes` | `16000` | Initial retrieved context, configurable from 256 to 131072 UTF-8 bytes. Prompt and later tool results are additional. |
+| `patchlight.runTimeoutSeconds` | `300` | Deadline for the complete run including fallback, from 10 to 1800 seconds |
+| `patchlight.fallbackModel` | empty | Optional second provider/model configured in TrueForge |
+
+## Testing and limits
+
+Run `npm test` to build the TypeScript extension and run its automated suites. To exercise the actual runtime and MCP approval protocol, start a separate local TrueForge instance with loopback access, then run `npm run smoke`. Set `TRUEFORGE_URL` for a different runtime port. The smoke test uses a deterministic local model stub.
+
+The agent terminal supports guarded read-only commands and approved `python3 -m pytest` or `python3 -m unittest` recipes. On a compatible non-root Linux host, review can request up to three new pytest tests against a filtered, read-only snapshot containing staged edits. This requires bubblewrap, prlimit, system Python and permitted user/network namespaces. The snapshot has no network or access to the host home directory. Only system Python packages are available. Limits include 500 files, 1 MiB per file, 20 MiB total, 30 seconds, 256 MiB of address space and 16 KiB of combined output. To run the full project suite with a project virtual environment, apply and save the changes, then use the editor’s integrated terminal.
+
+## Round 1 demo
+
+The demonstration uses `pallets/flask` at tag `3.1.3` (commit `22d92470`).
+
+1. **Inline edit.** Select `get_debug_flag`, request support for two additional false values and review the diff. Verify `FLASK_DEBUG=off` prints `False`.
+2. **Agent mode.** Request a built-in `flask config` command without naming files. Inspect the source, test and documentation changes. Run `pytest tests/test_cli.py -q`, check Flask help, and display masked JSON from a sample app. Inspect the matching TrueForge session.
+3. **Provider failure.** Repeat the inline request with an unreachable model endpoint. Check the editor error and confirm a clean working tree.
+
+## License and dependencies
+
+PatchLight is [MIT licensed](LICENSE). The project uses the [TrueForge runtime and SDK](https://github.com/truefoundry/trueforge), the Model Context Protocol SDK and [jsdiff](https://github.com/kpdecker/jsdiff) for line differencing. Dependency versions are pinned in the lockfile.
